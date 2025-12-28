@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use crossbeam_channel::Receiver;
 use anyhow::Result;
 use log::{error, info};
@@ -12,6 +12,14 @@ use crate::infrastructure::persistence::ConfigRepository;
 use crate::infrastructure::process_monitor::ProcessMonitor;
 use crate::infrastructure::timer::HighResolutionTimer;
 use crate::usecase::input_monitor::ChatterDetector;
+
+/// Result of the last save operation.
+#[derive(Debug, Clone)]
+pub struct LastSaveResult {
+    pub success: bool,
+    pub message: String,
+    pub timestamp: SystemTime,
+}
 
 /// Snapshot of the monitor state for UI consumption.
 #[derive(Debug, Clone, Default)]
@@ -25,6 +33,7 @@ pub struct MonitorSharedState {
     pub bindings: HashMap<LogicalKey, u16>,
     pub switch_stats: HashMap<LogicalKey, ButtonStats>,
     pub last_status_message: Option<String>,
+    pub last_save_result: Option<LastSaveResult>,
 }
 
 pub enum MonitorCommand {
@@ -86,9 +95,13 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             MonitorCommand::ForceSave => {
                 if let Err(e) = self.repository.save(&self.profile) {
                     error!("Force save failed: {}", e);
-                    self.update_status(format!("Save failed: {}", e));
+                    let msg = format!("Save failed: {}", e);
+                    self.update_status(msg.clone());
+                    self.update_save_result(false, msg);
                 } else {
-                    self.update_status("Saved successfully".to_string());
+                    let msg = "Saved successfully".to_string();
+                    self.update_status(msg.clone());
+                    self.update_save_result(true, msg);
                 }
             }
             MonitorCommand::UpdateConfig(cfg) => {
@@ -272,6 +285,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             if last_save_at.elapsed() >= save_interval {
                 if let Err(e) = self.repository.save(&self.profile) {
                     error!("Auto save failed: {}", e);
+                    self.update_save_result(false, format!("Auto save failed: {}", e));
+                } else {
+                    self.update_save_result(true, "Auto save succeeded".to_string());
                 }
                 last_save_at = Instant::now();
             }
@@ -281,6 +297,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         info!("Monitor loop exiting. Saving profile...");
         if let Err(e) = self.repository.save(&self.profile) {
             error!("Exit save failed: {}", e);
+            self.update_save_result(false, format!("Exit save failed: {}", e));
+        } else {
+            self.update_save_result(true, "Exit save succeeded".to_string());
         }
 
         // Ensure RAII timer is dropped (implicit)
@@ -315,6 +334,16 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
     fn update_status(&self, msg: String) {
         if let Ok(mut state) = self.shared_state.write() {
             state.last_status_message = Some(msg);
+        }
+    }
+
+    fn update_save_result(&self, success: bool, message: String) {
+        if let Ok(mut state) = self.shared_state.write() {
+            state.last_save_result = Some(LastSaveResult {
+                success,
+                message,
+                timestamp: SystemTime::now(),
+            });
         }
     }
 }
