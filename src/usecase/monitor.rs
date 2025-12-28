@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::thread;
 use std::time::{Duration, Instant};
 use crossbeam_channel::Receiver;
 use anyhow::Result;
 use log::{error, info};
 
 use crate::domain::models::{AppConfig, ButtonStats, LogicalKey, UserProfile};
-use crate::infrastructure::input_source::InputSource;
+use crate::domain::interfaces::InputSource;
+use crate::domain::errors::InputError;
 use crate::infrastructure::persistence::ConfigRepository;
 use crate::infrastructure::process_monitor::ProcessMonitor;
+use crate::infrastructure::timer::HighResolutionTimer;
 use crate::usecase::input_monitor::ChatterDetector;
 
 /// Snapshot of the monitor state for UI consumption.
@@ -20,23 +21,15 @@ pub struct MonitorSharedState {
     pub target_controller_index: u32,
     pub polling_rate_current: u64,
 
-    // Mapping info for display
     pub profile_name: String,
     pub bindings: HashMap<LogicalKey, u16>,
-
-    // Stats for display
-    // We only expose necessary stats.
-    // Ideally this should be a read-optimized structure.
     pub switch_stats: HashMap<LogicalKey, ButtonStats>,
-
-    // Last status message (e.g., "Saved successfully")
     pub last_status_message: Option<String>,
 }
 
-/// Commands sent from UI/Main thread to Monitor thread.
 pub enum MonitorCommand {
     UpdateConfig(AppConfig),
-    UpdateMapping(String, HashMap<LogicalKey, u16>), // name, bindings
+    UpdateMapping(String, HashMap<LogicalKey, u16>),
     ReplaceSwitch { key: LogicalKey, new_model_id: String },
     ResetStats { key: LogicalKey },
     Shutdown,
@@ -48,13 +41,14 @@ pub struct MonitorService<I, P, R> {
     process_monitor: P,
     repository: R,
 
-    // State
     profile: UserProfile,
     chatter_detector: ChatterDetector,
 
-    // Thread Communication
     command_rx: Receiver<MonitorCommand>,
     shared_state: Arc<RwLock<MonitorSharedState>>,
+
+    // Timer Resolution Control
+    high_res_timer: Option<HighResolutionTimer>,
 }
 
 impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P, R> {
@@ -70,7 +64,6 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             UserProfile::default()
         });
 
-        // Initialize chatter detector with loaded config
         let chatter_detector = ChatterDetector::new(profile.config.chatter_threshold_ms);
 
         Ok(Self {
@@ -81,18 +74,14 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             chatter_detector,
             command_rx,
             shared_state,
+            high_res_timer: None,
         })
     }
 
-    fn handle_command(&mut self, cmd: MonitorCommand, _was_connected: &mut bool) {
+    fn handle_command(&mut self, cmd: MonitorCommand) {
         match cmd {
             MonitorCommand::Shutdown => {
                 info!("Shutdown command received");
-                // Handled in loop break logic or flag?
-                // Wait, logic is extracted. The caller needs to know if shutdown.
-                // But shutdown breaks the loop.
-                // Refactoring: MonitorCommand::Shutdown should be handled by caller if it breaks loop.
-                // Or handle_command returns ControlFlow.
             }
             MonitorCommand::ForceSave => {
                 if let Err(e) = self.repository.save(&self.profile) {
@@ -104,7 +93,6 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             }
             MonitorCommand::UpdateConfig(cfg) => {
                 self.profile.config = cfg;
-                // Re-init detector if threshold changed
                 self.chatter_detector = ChatterDetector::new(self.profile.config.chatter_threshold_ms);
                 info!("Config updated");
             }
@@ -114,13 +102,11 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 info!("Mapping updated");
             }
             MonitorCommand::ReplaceSwitch { key, new_model_id } => {
-                // Reset stats and update model
                  if let Some(switch) = self.profile.switches.get_mut(&key) {
                      switch.stats = ButtonStats::default();
                      switch.switch_model_id = new_model_id;
                      info!("Replaced switch for {}", key);
                  } else {
-                     // Create new if not exists
                      self.profile.switches.insert(key.clone(), crate::domain::models::SwitchData {
                          switch_model_id: new_model_id,
                          stats: ButtonStats::default(),
@@ -144,20 +130,20 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         let save_interval = Duration::from_secs(60);
 
         let mut was_connected = false;
+        let mut was_game_running = false;
         let mut last_process_check = Instant::now();
         let process_check_interval = Duration::from_secs(2);
 
         // Main Loop
         'monitor_loop: loop {
-            // 1. Process Commands (Pre-check)
-            // If we have pending commands, process them immediately.
+            // 1. Process Commands
             while let Ok(cmd) = self.command_rx.try_recv() {
                 if let MonitorCommand::Shutdown = cmd {
                      info!("Shutdown command received");
                      break 'monitor_loop;
                 }
-                self.handle_command(cmd, &mut was_connected);
-                self.publish_state(was_connected, self.shared_state.read().unwrap().is_game_running);
+                self.handle_command(cmd);
+                self.publish_state(was_connected, was_game_running);
             }
 
             // 2. Determine Polling Rate
@@ -177,31 +163,52 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                              info!("Shutdown command received during wait");
                              break 'monitor_loop;
                          }
-                         self.handle_command(cmd, &mut was_connected);
-                         self.publish_state(was_connected, self.shared_state.read().unwrap().is_game_running);
-                         // Continue loop immediately to re-evaluate polling rate (if config changed)
-                         // or just proceed to poll input?
-                         // If we proceed to poll input, we might violate polling rate interval if command came early.
-                         // But for responsiveness, maybe we should just loop.
+                         self.handle_command(cmd);
+                         self.publish_state(was_connected, was_game_running);
                          continue 'monitor_loop;
                      }
                 },
                 default(Duration::from_millis(polling_rate)) => {
-                    // Timeout elapsed, proceed to polling input
+                    // Timeout elapsed
                 }
             }
 
             // 4. Input Polling
             let input_result = self.input_source.get_state(target_index);
-            let is_connected = input_result.is_ok();
+            let is_connected = match &input_result {
+                Ok(_) => true,
+                Err(InputError::Disconnected) => false,
+                Err(e) => {
+                    // Treat other errors as disconnected for safety, but log them
+                    // Or keep 'connected' state if it's transient?
+                    // "Distinguish disconnect reason... reflect in log/state".
+                    // For now, treat as disconnected but specific log.
+                    error!("Input Error: {}", e);
+                    false
+                }
+            };
 
-            // State Transition Logging
+            // State Transition: Connected <-> Disconnected
             if is_connected != was_connected {
                 info!("Connection state changed: {} -> {}", was_connected, is_connected);
                 was_connected = is_connected;
+
+                if is_connected {
+                    // Connected: Enable HighRes Timer
+                    if self.high_res_timer.is_none() {
+                         self.high_res_timer = Some(HighResolutionTimer::new());
+                         info!("High resolution timer enabled");
+                    }
+                } else {
+                    // Disconnected: Disable HighRes Timer
+                    if self.high_res_timer.is_some() {
+                        self.high_res_timer = None;
+                        info!("High resolution timer disabled");
+                    }
+                }
             }
 
-            // 5. Process Input (if connected)
+            // 5. Process Input
             if let Ok(w_buttons) = input_result {
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -219,6 +226,10 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                     });
 
                     self.chatter_detector.process_button(key, is_pressed, now_ms, &mut switch_data.stats);
+
+                    // Note: session tracking logic is implicitly handled by `process_button` if we were just incrementing.
+                    // But `process_button` only updates total/session stats.
+                    // We need to manage session reset on game start.
                 }
             }
 
@@ -228,8 +239,31 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 last_process_check = Instant::now();
                 running
             } else {
-                 self.shared_state.read().unwrap().is_game_running
+                 was_game_running
             };
+
+            // Session Logic
+            if is_game_running != was_game_running {
+                info!("Game running state changed: {} -> {}", was_game_running, is_game_running);
+                if is_game_running {
+                    // Game Started: Reset session stats
+                    info!("Game started. Resetting session stats.");
+                    for switch in self.profile.switches.values_mut() {
+                        switch.stats.last_session_presses = 0;
+                    }
+                } else {
+                    // Game Ended: Generate report
+                    info!("Game ended. Session Report:");
+                    // Ideally we should structure this report better or send event
+                    for (key, switch) in &self.profile.switches {
+                        if switch.stats.last_session_presses > 0 {
+                             info!("  {}: {} presses", key, switch.stats.last_session_presses);
+                        }
+                    }
+                    // Notify UI if needed (omitted for CLI focus)
+                }
+                was_game_running = is_game_running;
+            }
 
             // 7. Publish State
             self.publish_state(is_connected, is_game_running);
@@ -248,6 +282,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         if let Err(e) = self.repository.save(&self.profile) {
             error!("Exit save failed: {}", e);
         }
+
+        // Ensure RAII timer is dropped (implicit)
+        self.high_res_timer = None;
     }
 
     fn check_game_running(&mut self) -> bool {
