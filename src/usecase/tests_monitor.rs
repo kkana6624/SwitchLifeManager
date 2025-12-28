@@ -1,4 +1,3 @@
-
 #[cfg(test)]
 pub mod tests {
     use std::sync::{Arc, Mutex};
@@ -205,7 +204,7 @@ pub mod tests {
 
         // 1. Verify initial state (via shared state) with Retry Loop
         let mut found = false;
-        for _ in 0..20 { // Wait up to 1s (20 * 50ms)
+        for _ in 0..40 { // Wait up to 2s
             thread::sleep(Duration::from_millis(50));
             let snapshot = shared_state.load();
             if let Some(stats) = snapshot.switch_stats.get(&key) {

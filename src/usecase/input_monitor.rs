@@ -58,9 +58,11 @@ impl ChatterDetector {
 
             if is_chatter {
                 stats.total_chatters += 1;
+                stats.last_session_chatters += 1;
 
                 if !state.has_counted_chatter_release {
                     stats.total_chatter_releases += 1;
+                    stats.last_session_chatter_releases += 1;
                     state.has_counted_chatter_release = true;
                 }
 

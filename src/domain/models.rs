@@ -70,9 +70,22 @@ impl FromStr for LogicalKey {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputMethod {
+    XInput,
+    DirectInput,
+}
+
+impl Default for InputMethod {
+    fn default() -> Self {
+        Self::DirectInput
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub target_controller_index: u32,
+    pub input_method: InputMethod,
     pub chatter_threshold_ms: u64,
     pub polling_rate_ms_connected: u64,
     pub polling_rate_ms_disconnected: u64,
@@ -83,6 +96,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             target_controller_index: 0,
+            input_method: InputMethod::default(),
             chatter_threshold_ms: 15,
             polling_rate_ms_connected: 1,
             polling_rate_ms_disconnected: 1000,
@@ -114,7 +128,19 @@ pub struct ButtonStats {
     pub total_releases: u64,
     pub total_chatters: u64,
     pub total_chatter_releases: u64,
+    
+    // Session stats (reset per game session)
     pub last_session_presses: u64,
+    pub last_session_chatters: u64,
+    pub last_session_chatter_releases: u64,
+}
+
+impl ButtonStats {
+    pub fn reset_session_stats(&mut self) {
+        self.last_session_presses = 0;
+        self.last_session_chatters = 0;
+        self.last_session_chatter_releases = 0;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,6 +252,8 @@ mod tests {
             total_chatters: 5,
             total_chatter_releases: 5,
             last_session_presses: 10,
+            last_session_chatters: 0,
+            last_session_chatter_releases: 0,
         };
         profile.switches.insert(LogicalKey::Key1, SwitchData {
             switch_model_id: "omron".to_string(),

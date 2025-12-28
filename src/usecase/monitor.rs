@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use crossbeam_channel::Receiver;
@@ -34,6 +34,10 @@ pub struct MonitorSharedState {
     // Use Arc to avoid cloning the map every update
     pub bindings: Arc<HashMap<LogicalKey, u16>>,
     pub switch_stats: HashMap<LogicalKey, ButtonStats>,
+    
+    // Real-time Input State for Tester
+    pub current_pressed_keys: HashSet<LogicalKey>,
+
     pub last_status_message: Option<String>,
     pub last_save_result: Option<LastSaveResult>,
 }
@@ -70,7 +74,7 @@ pub struct MonitorService<I, P, R> {
 
 impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P, R> {
     pub fn new(
-        input_source: I,
+        mut input_source: I,
         process_monitor: P,
         repository: R,
         command_rx: Receiver<MonitorCommand>,
@@ -80,6 +84,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             error!("Failed to load profile, using default: {}", e);
             UserProfile::default()
         });
+
+        // Initialize input method from profile
+        input_source.set_input_method(profile.config.input_method.clone());
 
         let chatter_detector = ChatterDetector::new(profile.config.chatter_threshold_ms);
         let cached_bindings = Arc::new(profile.mapping.bindings.clone());
@@ -116,6 +123,12 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 }
             }
             MonitorCommand::UpdateConfig(cfg) => {
+                // Update input method if changed
+                if cfg.input_method != self.profile.config.input_method {
+                    self.input_source.set_input_method(cfg.input_method.clone());
+                    info!("Input method switched to {:?}", cfg.input_method);
+                }
+
                 self.profile.config = cfg;
                 self.chatter_detector = ChatterDetector::new(self.profile.config.chatter_threshold_ms);
                 info!("Config updated");
@@ -196,7 +209,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         let process_check_interval = Duration::from_secs(2);
 
         let mut last_publish = Instant::now();
-        let publish_interval = Duration::from_millis(16); // ~60Hz throttle
+        let publish_interval = Duration::from_millis(30); // ~33Hz throttle
+
+        let mut current_pressed_keys = HashSet::new();
 
         // Main Loop
         'monitor_loop: loop {
@@ -209,7 +224,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                      break 'monitor_loop;
                 }
                 self.handle_command(cmd);
-                force_publish = true; // Always publish after command execution
+                force_publish = true;
             }
 
             // 2. Determine Polling Rate
@@ -231,7 +246,6 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                          }
                          self.handle_command(cmd);
                          force_publish = true;
-                         // Don't continue, fall through to logic so we don't skip input polling if time passed
                      }
                 },
                 default(Duration::from_millis(polling_rate)) => {
@@ -272,6 +286,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             }
 
             // 5. Process Input
+            current_pressed_keys.clear();
             if let Ok(w_buttons) = input_result {
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -280,6 +295,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
 
                 for (key, &mask) in &self.profile.mapping.bindings {
                     let is_pressed = (w_buttons & mask) != 0;
+                    if is_pressed {
+                        current_pressed_keys.insert(key.clone());
+                    }
 
                     let switch_data = self.profile.switches.entry(key.clone()).or_insert_with(|| {
                          crate::domain::models::SwitchData {
@@ -289,6 +307,10 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                     });
 
                     self.chatter_detector.process_button(key, is_pressed, now_ms, &mut switch_data.stats);
+
+                    // Note: session tracking logic is implicitly handled by `process_button` if we were just incrementing.
+                    // But `process_button` only updates total/session stats.
+                    // We need to manage session reset on game start.
                 }
             }
 
@@ -306,26 +328,28 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 info!("Game running state changed: {} -> {}", was_game_running, is_game_running);
                 if is_game_running {
                     // Game Started: Reset session stats
-                    info!("AUDIT: Game started. Resetting session stats.");
+                    info!("Game started. Resetting session stats.");
                     for switch in self.profile.switches.values_mut() {
-                        switch.stats.last_session_presses = 0;
+                        switch.stats.reset_session_stats();
                     }
                 } else {
                     // Game Ended: Generate report
-                    info!("AUDIT: Game ended. Session Report:");
+                    info!("Game ended. Session Report:");
+                    // Ideally we should structure this report better or send event
                     for (key, switch) in &self.profile.switches {
                         if switch.stats.last_session_presses > 0 {
                              info!("  {}: {} presses", key, switch.stats.last_session_presses);
                         }
                     }
+                    // Notify UI if needed (omitted for CLI focus)
                 }
                 was_game_running = is_game_running;
                 force_publish = true;
             }
 
-            // 7. Publish State (Throttled)
+            // 7. Publish State
             if force_publish || last_publish.elapsed() >= publish_interval {
-                self.publish_state(is_connected, is_game_running);
+                self.publish_state(is_connected, is_game_running, &current_pressed_keys);
                 last_publish = Instant::now();
             }
 
@@ -358,7 +382,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         self.process_monitor.is_process_running(&self.profile.config.target_process_name)
     }
 
-    fn publish_state(&self, is_connected: bool, is_game_running: bool) {
+    fn publish_state(&self, is_connected: bool, is_game_running: bool, pressed_keys: &HashSet<LogicalKey>) {
         // Construct new state
         let mut switch_stats = HashMap::with_capacity(self.profile.switches.len());
         for (k, v) in &self.profile.switches {
@@ -382,6 +406,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             profile_name: self.profile.mapping.profile_name.clone(),
             bindings: self.cached_bindings.clone(), // Cheap Arc clone
             switch_stats,
+            current_pressed_keys: pressed_keys.clone(),
             last_status_message: old_state.last_status_message.clone(), // Preserve
             last_save_result: old_state.last_save_result.clone(),       // Preserve
         };
