@@ -154,8 +154,8 @@ pub mod tests {
         // Attempt to assign Key2 -> Button 1 (Conflict)
         service.handle_command(MonitorCommand::SetKeyBinding { key: LogicalKey::Key2, button: 1 });
 
-        // Key1 should be removed
-        assert!(!service.profile.mapping.bindings.contains_key(&LogicalKey::Key1));
+        // Key1 should be unbound (set to 0)
+        assert_eq!(service.profile.mapping.bindings.get(&LogicalKey::Key1), Some(&0));
         // Key2 should be inserted
         assert_eq!(service.profile.mapping.bindings.get(&LogicalKey::Key2), Some(&1));
     }
@@ -207,8 +207,8 @@ pub mod tests {
         for _ in 0..40 { // Wait up to 2s
             thread::sleep(Duration::from_millis(50));
             let snapshot = shared_state.load();
-            if let Some(stats) = snapshot.switch_stats.get(&key) {
-                if stats.last_session_presses == 50 {
+            if let Some(data) = snapshot.switches.get(&key) {
+                if data.stats.last_session_presses == 50 {
                     found = true;
                     break;
                 }
@@ -224,8 +224,8 @@ pub mod tests {
         thread::sleep(Duration::from_millis(2100));
 
         let snapshot = shared_state.load();
-        if let Some(stats) = snapshot.switch_stats.get(&key) {
-             assert_eq!(stats.last_session_presses, 0, "Session presses should be reset after game start");
+        if let Some(data) = snapshot.switches.get(&key) {
+             assert_eq!(data.stats.last_session_presses, 0, "Session presses should be reset after game start");
         } else {
              panic!("Key missing from stats after game start");
         }

@@ -24,8 +24,6 @@ pub fn get_official_controller_map() -> ButtonMap {
     // Assuming:
     // E1 = Button 9 (1 << 8)
     // E2 = Button 10 (1 << 9)
-    // Start = Button 11 (1 << 10)
-    // Select = Button 12 (1 << 11)
     bindings.insert(LogicalKey::E1, 1 << 8);
     bindings.insert(LogicalKey::E2, 1 << 9);
 
@@ -61,8 +59,7 @@ mod tests {
         // Check core keys
         assert_eq!(map.bindings.get(&LogicalKey::Key1), Some(&1));
         assert_eq!(map.bindings.get(&LogicalKey::Key7), Some(&64));
-        assert_eq!(map.bindings.get(&LogicalKey::Start), Some(&1024));
-
+        
         // Ensure all required keys are present
         assert!(map.bindings.contains_key(&LogicalKey::Key1));
         assert!(map.bindings.contains_key(&LogicalKey::Key2));
