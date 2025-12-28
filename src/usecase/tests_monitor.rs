@@ -7,6 +7,7 @@ use crate::infrastructure::input_source::MockInputSource;
 use crate::infrastructure::persistence::ConfigRepository;
 use crate::infrastructure::process_monitor::MockProcessMonitor;
 use crate::usecase::monitor::{MonitorCommand, MonitorService, MonitorSharedState};
+use crate::domain::errors::InputError;
 use anyhow::Result;
 
 // Mock Repository
@@ -42,13 +43,13 @@ fn test_monitor_loop_integration() {
     // Our MockInputSource wraps this: Ok(val) = connected with input. Err = disconnected.
 
     let inputs = vec![
-        Err(anyhow::anyhow!("Disconnected")), // 1
+        Err(InputError::Disconnected), // 1
         Ok(0), // 2 Connected, no press
         Ok(0), // 3
         Ok(1), // 4 Connected, press button 1 (bitmask 1)
         Ok(1), // 5 Hold
         Ok(0), // 6 Release
-        Err(anyhow::anyhow!("Disconnected")), // 7
+        Err(InputError::Disconnected), // 7
     ];
 
     let input_source = MockInputSource::new(inputs);
