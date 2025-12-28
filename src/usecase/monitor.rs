@@ -38,7 +38,8 @@ pub struct MonitorSharedState {
 
 pub enum MonitorCommand {
     UpdateConfig(AppConfig),
-    UpdateMapping(String, HashMap<LogicalKey, u16>),
+    UpdateMapping(String, HashMap<LogicalKey, u16>), // Preserved for bulk updates (presets)
+    SetKeyBinding { key: LogicalKey, button: u16 }, // Added for single key update with conflict resolution
     ReplaceSwitch { key: LogicalKey, new_model_id: String },
     ResetStats { key: LogicalKey },
     Shutdown,
@@ -113,6 +114,31 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 self.profile.mapping.profile_name = name;
                 self.profile.mapping.bindings = bindings;
                 info!("Mapping updated");
+            }
+            MonitorCommand::SetKeyBinding { key, button } => {
+                // Duplicate Resolution Logic:
+                // 1. Check if 'button' is already assigned to any OTHER key.
+                // 2. If so, remove that old assignment.
+                // 3. Assign 'key' -> 'button'.
+
+                // Identify conflict
+                let mut conflict_key = None;
+                for (k, &v) in &self.profile.mapping.bindings {
+                    if v == button && *k != key {
+                        conflict_key = Some(k.clone());
+                        break;
+                    }
+                }
+
+                // Remove old assignment if exists
+                if let Some(old_key) = conflict_key {
+                    self.profile.mapping.bindings.remove(&old_key);
+                    info!("Removed duplicate binding for key: {} (button {})", old_key, button);
+                }
+
+                // Insert new assignment
+                self.profile.mapping.bindings.insert(key.clone(), button);
+                info!("Set binding for key: {} -> button {}", key, button);
             }
             MonitorCommand::ReplaceSwitch { key, new_model_id } => {
                  if let Some(switch) = self.profile.switches.get_mut(&key) {

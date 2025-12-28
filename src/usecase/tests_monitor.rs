@@ -91,31 +91,6 @@ fn test_monitor_loop_integration() {
     // 5. Verify State
     let state = shared_state.read().unwrap();
 
-    // We expect some stats on Key1
-    // The inputs were: Disconnect, Conn, Conn, Press(1), Hold(1), Release(0), Disconnect
-    // So 1 Press, 1 Release.
-
-    // Note: The MockInputSource in `monitor.rs` loop might be consumed faster or slower than we think because of `sleep`.
-    // But since we set polling to 1ms and slept 100ms, it should have consumed all inputs (7 items).
-    // Once consumed, MockInputSource defaults to Ok(0).
-
-    // However, the input source mock logic:
-    // "if self.current_index < self.states.len() ... else Ok(0)"
-    // So after the list, it returns Ok(0) -> Connected, No Press.
-
-    // So:
-    // 1. Err -> Disconnected
-    // 2. Ok(0) -> Connected
-    // 3. Ok(0)
-    // 4. Ok(1) -> Press
-    // 5. Ok(1) -> Hold
-    // 6. Ok(0) -> Release
-    // 7. Err -> Disconnected (Wait, input source list item 7 is Err)
-    // 8+. Ok(0) -> Connected (Wait, MockInputSource defaults to Ok(0) after list is exhausted)
-
-    // So the state at the end should be Connected (because it fell through to default Ok(0)).
-    // But stats should have captured the press/release.
-
     let stats = state.switch_stats.get(&LogicalKey::Key1);
     assert!(stats.is_some(), "Key1 stats should exist");
     let stats = stats.unwrap();
@@ -166,6 +141,71 @@ fn test_command_handling() {
     {
         let state = shared_state.read().unwrap();
         assert_eq!(state.target_controller_index, 2);
+    }
+
+    tx.send(MonitorCommand::Shutdown).unwrap();
+    handle.join().unwrap();
+}
+
+#[test]
+fn test_set_key_binding_duplicate_resolution() {
+    let input_source = MockInputSource::new(vec![]);
+    let process_monitor = MockProcessMonitor::new(false);
+    let repo = MockRepository::new();
+
+    // Initial state: Key1 -> 1
+    {
+        let mut p = repo.profile.write().unwrap();
+        p.mapping.bindings.insert(LogicalKey::Key1, 1);
+        p.config.polling_rate_ms_connected = 1;
+        p.config.polling_rate_ms_disconnected = 1;
+    }
+
+    let (tx, rx) = unbounded();
+    let shared_state = Arc::new(RwLock::new(MonitorSharedState::default()));
+
+    let service = MonitorService::new(
+        input_source,
+        process_monitor,
+        repo,
+        rx,
+        shared_state.clone(),
+    ).unwrap();
+
+    let handle = thread::spawn(move || {
+        service.run();
+    });
+
+    // Case 1: Assign Key2 -> 2 (Fresh)
+    tx.send(MonitorCommand::SetKeyBinding { key: LogicalKey::Key2, button: 2 }).unwrap();
+    thread::sleep(Duration::from_millis(20));
+
+    {
+        let state = shared_state.read().unwrap();
+        assert_eq!(state.bindings.get(&LogicalKey::Key1), Some(&1));
+        assert_eq!(state.bindings.get(&LogicalKey::Key2), Some(&2));
+    }
+
+    // Case 2: Assign Key3 -> 1 (Duplicate of Key1)
+    // Expect: Key1 removed, Key3 set to 1
+    tx.send(MonitorCommand::SetKeyBinding { key: LogicalKey::Key3, button: 1 }).unwrap();
+    thread::sleep(Duration::from_millis(20));
+
+    {
+        let state = shared_state.read().unwrap();
+        assert_eq!(state.bindings.get(&LogicalKey::Key1), None, "Key1 should be removed");
+        assert_eq!(state.bindings.get(&LogicalKey::Key3), Some(&1), "Key3 should be set");
+        assert_eq!(state.bindings.get(&LogicalKey::Key2), Some(&2), "Key2 should be untouched");
+    }
+
+    // Case 3: Move Key3 -> 3 (Update existing)
+    tx.send(MonitorCommand::SetKeyBinding { key: LogicalKey::Key3, button: 3 }).unwrap();
+    thread::sleep(Duration::from_millis(20));
+
+    {
+        let state = shared_state.read().unwrap();
+        assert_eq!(state.bindings.get(&LogicalKey::Key3), Some(&3));
+        // Previous binding (1) is now free
     }
 
     tx.send(MonitorCommand::Shutdown).unwrap();
