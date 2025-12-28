@@ -1,0 +1,302 @@
+use eframe::egui;
+use std::sync::Arc;
+use arc_swap::ArcSwap;
+use crossbeam_channel::Sender;
+use crate::usecase::monitor::{MonitorCommand, MonitorSharedState};
+use crate::domain::models::LogicalKey;
+
+#[derive(PartialEq)]
+enum AppTab {
+    Dashboard,
+    Tester,
+    Settings,
+}
+
+#[derive(Default)]
+struct KeyConfigState {
+    target_key: Option<LogicalKey>,
+    initial_buttons: u16,
+}
+
+pub struct SwitchLifeApp {
+    shared_state: Arc<ArcSwap<MonitorSharedState>>,
+    command_tx: Sender<MonitorCommand>,
+    current_tab: AppTab,
+    key_config_state: KeyConfigState,
+}
+
+impl SwitchLifeApp {
+    pub fn new(
+        _cc: &eframe::CreationContext<'_>,
+        shared_state: Arc<ArcSwap<MonitorSharedState>>,
+        command_tx: Sender<MonitorCommand>,
+    ) -> Self {
+        // Customize fonts here if needed
+        Self {
+            shared_state,
+            command_tx,
+            current_tab: AppTab::Dashboard,
+            key_config_state: KeyConfigState::default(),
+        }
+    }
+}
+
+impl eframe::App for SwitchLifeApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Request repaint to keep UI updated with monitor thread
+        ctx.request_repaint();
+        
+        let state = self.shared_state.load();
+
+        // Handle Key Config Input
+        if let Some(target_key) = &self.key_config_state.target_key {
+            let current_raw = state.raw_button_state;
+            let initial = self.key_config_state.initial_buttons;
+            
+            // Detect new press (current has bits that were not in initial)
+            // We ignore release of initial buttons.
+            let new_presses = current_raw & !initial;
+
+            if new_presses != 0 {
+                // Pick the lowest bit set (arbitrary choice for single button mapping)
+                let button_bit = 1 << new_presses.trailing_zeros();
+                
+                let _ = self.command_tx.send(MonitorCommand::SetKeyBinding {
+                    key: target_key.clone(),
+                    button: button_bit,
+                });
+                
+                // Close modal
+                self.key_config_state.target_key = None;
+            }
+        }
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("Switch Life Manager");
+
+            // Status Header
+            ui.horizontal(|ui| {
+                ui.label("Status: ");
+                if state.is_connected {
+                    ui.colored_label(egui::Color32::GREEN, "Connected");
+                } else {
+                    ui.colored_label(egui::Color32::RED, "Disconnected");
+                }
+                
+                ui.separator();
+
+                ui.label("Game: ");
+                if state.is_game_running {
+                     ui.colored_label(egui::Color32::BLUE, "Running");
+                } else {
+                     ui.label("Stopped");
+                }
+            });
+
+            if let Some(msg) = &state.last_status_message {
+                ui.label(format!("Log: {}", msg));
+            }
+
+            ui.separator();
+
+            // Tabs
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.current_tab, AppTab::Dashboard, "Dashboard");
+                ui.selectable_value(&mut self.current_tab, AppTab::Tester, "Input Tester");
+                ui.selectable_value(&mut self.current_tab, AppTab::Settings, "Settings");
+            });
+            ui.separator();
+
+            match self.current_tab {
+                AppTab::Dashboard => {
+                    self.show_dashboard(ui, &state);
+                }
+                AppTab::Tester => {
+                    self.show_tester(ui, &state);
+                }
+                AppTab::Settings => {
+                    self.show_settings(ui, &state);
+                }
+            }
+        });
+
+        // Modal for Key Config
+        if let Some(target_key) = self.key_config_state.target_key.clone() {
+            egui::Window::new("Key Configuration")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.heading(format!("Press a button for {}", target_key));
+                    ui.label("Please press the button you want to assign...");
+                    ui.add_space(20.0);
+                    if ui.button("Cancel").clicked() {
+                        self.key_config_state.target_key = None;
+                    }
+                });
+        }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        let _ = self.command_tx.send(MonitorCommand::Shutdown);
+    }
+}
+
+impl SwitchLifeApp {
+    fn show_dashboard(&self, ui: &mut egui::Ui, state: &MonitorSharedState) {
+        ui.heading("Switch Statistics");
+
+        // Sort keys for stable display
+        let mut keys: Vec<_> = state.switches.keys().collect();
+        keys.sort_by_key(|k| k.to_string());
+
+        // Helper to get rated lifespan
+        let default_models = crate::domain::models::get_default_switch_models();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for key in keys {
+                if let Some(switch_data) = state.switches.get(key) {
+                    let stats = &switch_data.stats;
+
+                    // Find model info
+                    let model_info = default_models.iter()
+                        .find(|m| m.id == switch_data.switch_model_id)
+                        .or_else(|| default_models.iter().find(|m| m.id == "generic_unknown"));
+                    
+                    let rated_lifespan = model_info.map(|m| m.rated_lifespan_presses).unwrap_or(1_000_000) as f64;
+                    
+                    // Calculate Life
+                    let usage_ratio = stats.total_presses as f64 / rated_lifespan;
+                    let remaining_ratio = 1.0 - usage_ratio;
+                    
+                    // Determine Color
+                    // 100-51: Green, 50-26: Yellow, 25-0: Red
+                    let bar_color = if remaining_ratio > 0.50 {
+                         egui::Color32::GREEN
+                    } else if remaining_ratio > 0.25 {
+                         egui::Color32::YELLOW
+                    } else {
+                         egui::Color32::RED
+                    };
+                    
+                    // Display Ratio (clamp for bar, but text can show negative or 0)
+                    let display_ratio = remaining_ratio.clamp(0.0, 1.0) as f32;
+
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(key.to_string()).strong());
+                            // Show model name small
+                            ui.label(egui::RichText::new(format!("({})", switch_data.switch_model_id)).small());
+                            
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(format!("Total: {}", stats.total_presses));
+                            });
+                        });
+                        
+                        // Life Bar
+                        ui.add_space(2.0);
+                        ui.vertical(|ui| {
+                            let bar = egui::ProgressBar::new(display_ratio)
+                                .text(format!("Life: {:.1}%", remaining_ratio * 100.0))
+                                .fill(bar_color);
+                            ui.add(bar);
+                        });
+                        ui.add_space(2.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label(format!("Session: {}", stats.last_session_presses));
+                            ui.add_space(10.0);
+                            ui.label(format!("Chatters: {} ({}%)", 
+                                stats.total_chatters,
+                                if stats.total_presses > 0 {
+                                    (stats.total_chatters as f64 / (stats.total_presses + stats.total_chatters) as f64 * 100.0) as u64
+                                } else { 0 }
+                            ));
+                        });
+                    });
+                }
+            }
+        });
+    }
+
+    fn show_tester(&self, ui: &mut egui::Ui, state: &MonitorSharedState) {
+        ui.heading("Real-time Input Tester");
+        ui.label("Press buttons on your controller to see them light up.");
+
+        if !state.is_connected {
+            ui.colored_label(egui::Color32::RED, "Controller Disconnected - Please connect your device.");
+            return;
+        }
+
+        // We iterate over known bindings to display buttons in a logical order if possible
+        let mut sorted_keys: Vec<_> = state.bindings.keys().collect();
+        sorted_keys.sort_by_key(|k| k.to_string());
+
+        egui::Grid::new("tester_grid").striped(true).spacing([20.0, 10.0]).show(ui, |ui| {
+            for key in sorted_keys {
+                let is_pressed = state.current_pressed_keys.contains(key);
+                
+                // Label
+                ui.label(egui::RichText::new(key.to_string()).size(16.0));
+
+                // Indicator
+                let (color, text) = if is_pressed {
+                    (egui::Color32::GREEN, "ON")
+                } else {
+                    (egui::Color32::GRAY, "OFF")
+                };
+                
+                // Draw a simple colored box/label
+                ui.add(egui::Label::new(
+                    egui::RichText::new(text).color(egui::Color32::WHITE).background_color(color).heading()
+                ));
+
+                ui.end_row();
+            }
+        });
+
+        ui.add_space(20.0);
+        ui.label(egui::RichText::new("Note: This view shows raw input state derived from your key mappings.").italics());
+    }
+
+    fn show_settings(&mut self, ui: &mut egui::Ui, state: &MonitorSharedState) {
+        ui.heading("Configuration");
+        
+        ui.group(|ui| {
+             ui.heading("Key Bindings");
+             ui.label("Click 'Set' then press a button on your controller.");
+             
+             let mut sorted_keys: Vec<_> = state.bindings.keys().collect();
+             sorted_keys.sort_by_key(|k| k.to_string());
+
+             egui::Grid::new("settings_grid").striped(true).spacing([20.0, 10.0]).show(ui, |ui| {
+                for key in sorted_keys {
+                    ui.label(key.to_string());
+                    
+                    let mask = state.bindings.get(key).unwrap_or(&0);
+                    ui.monospace(format!("0x{:04X}", mask));
+
+                    if ui.button("Set").clicked() {
+                        self.key_config_state.target_key = Some(key.clone());
+                        self.key_config_state.initial_buttons = state.raw_button_state;
+                    }
+                    ui.end_row();
+                }
+             });
+        });
+
+        ui.add_space(20.0);
+        ui.horizontal(|ui| {
+            if ui.button("Save Configuration Forcefully").clicked() {
+                let _ = self.command_tx.send(MonitorCommand::ForceSave);
+            }
+            if ui.button("Reset to Default Mapping").clicked() {
+                let default_map = crate::domain::models::ButtonMap::default();
+                let _ = self.command_tx.send(MonitorCommand::UpdateMapping(
+                    default_map.profile_name,
+                    default_map.bindings,
+                ));
+            }
+        });
+    }
+}
