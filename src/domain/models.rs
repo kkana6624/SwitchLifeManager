@@ -70,12 +70,25 @@ impl FromStr for LogicalKey {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub target_controller_index: u32,
     pub chatter_threshold_ms: u64,
     pub polling_rate_ms_connected: u64,
     pub polling_rate_ms_disconnected: u64,
+    pub target_process_name: String,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            target_controller_index: 0,
+            chatter_threshold_ms: 15,
+            polling_rate_ms_connected: 1,
+            polling_rate_ms_disconnected: 1000,
+            target_process_name: "bm2dx.exe".to_string(),
+        }
+    }
 }
 
 #[serde_as]
@@ -129,6 +142,43 @@ impl Default for UserProfile {
             switches: HashMap::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SwitchModelInfo {
+    pub id: String,
+    pub name: String,
+    pub manufacturer: String,
+    pub rated_lifespan_presses: u64,
+}
+
+pub fn get_default_switch_models() -> Vec<SwitchModelInfo> {
+    vec![
+        SwitchModelInfo {
+            id: "omron_d2mv_01_1c3".to_string(),
+            name: "D2MV-01-1C3 (50g)".to_string(),
+            manufacturer: "Omron".to_string(),
+            rated_lifespan_presses: 10_000_000,
+        },
+        SwitchModelInfo {
+            id: "omron_d2mv_01_1c2".to_string(),
+            name: "D2MV-01-1C2 (25g)".to_string(),
+            manufacturer: "Omron".to_string(),
+            rated_lifespan_presses: 10_000_000,
+        },
+        SwitchModelInfo {
+            id: "omron_v_10_1a4".to_string(),
+            name: "V-10-1A4 (100g)".to_string(),
+            manufacturer: "Omron".to_string(),
+            rated_lifespan_presses: 50_000_000,
+        },
+        SwitchModelInfo {
+            id: "generic_unknown".to_string(),
+            name: "Generic / Unknown".to_string(),
+            manufacturer: "Generic".to_string(),
+            rated_lifespan_presses: 1_000_000,
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -188,5 +238,6 @@ mod tests {
         assert!(json.contains("\"Key1\": 4096"));
         assert!(json.contains("\"Other-99\": 1234"));
         assert!(json.contains("\"switch_model_id\": \"omron\""));
+        assert!(json.contains("\"target_process_name\": \"bm2dx.exe\""));
     }
 }
