@@ -1,9 +1,10 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use crossbeam_channel::Receiver;
 use anyhow::Result;
 use log::{error, info};
+use arc_swap::ArcSwap;
 
 use crate::domain::models::{AppConfig, ButtonStats, LogicalKey, UserProfile};
 use crate::domain::interfaces::InputSource;
@@ -30,7 +31,8 @@ pub struct MonitorSharedState {
     pub polling_rate_current: u64,
 
     pub profile_name: String,
-    pub bindings: HashMap<LogicalKey, u16>,
+    // Use Arc to avoid cloning the map every update
+    pub bindings: Arc<HashMap<LogicalKey, u16>>,
     pub switch_stats: HashMap<LogicalKey, ButtonStats>,
     pub last_status_message: Option<String>,
     pub last_save_result: Option<LastSaveResult>,
@@ -51,14 +53,19 @@ pub struct MonitorService<I, P, R> {
     process_monitor: P,
     repository: R,
 
-    profile: UserProfile,
+    // Made public for testing
+    pub profile: UserProfile,
     chatter_detector: ChatterDetector,
 
     command_rx: Receiver<MonitorCommand>,
-    shared_state: Arc<RwLock<MonitorSharedState>>,
+    // Use ArcSwap for lock-free reads from UI thread
+    shared_state: Arc<ArcSwap<MonitorSharedState>>,
 
     // Timer Resolution Control
     high_res_timer: Option<HighResolutionTimer>,
+
+    // Cached Arc for bindings to avoid recreating it when not changed
+    cached_bindings: Arc<HashMap<LogicalKey, u16>>,
 }
 
 impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P, R> {
@@ -67,7 +74,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         process_monitor: P,
         repository: R,
         command_rx: Receiver<MonitorCommand>,
-        shared_state: Arc<RwLock<MonitorSharedState>>,
+        shared_state: Arc<ArcSwap<MonitorSharedState>>,
     ) -> Result<Self> {
         let profile = repository.load().unwrap_or_else(|e| {
             error!("Failed to load profile, using default: {}", e);
@@ -75,6 +82,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         });
 
         let chatter_detector = ChatterDetector::new(profile.config.chatter_threshold_ms);
+        let cached_bindings = Arc::new(profile.mapping.bindings.clone());
 
         Ok(Self {
             input_source,
@@ -85,10 +93,12 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             command_rx,
             shared_state,
             high_res_timer: None,
+            cached_bindings,
         })
     }
 
-    fn handle_command(&mut self, cmd: MonitorCommand) {
+    // Made public for testing
+    pub fn handle_command(&mut self, cmd: MonitorCommand) {
         match cmd {
             MonitorCommand::Shutdown => {
                 info!("Shutdown command received");
@@ -113,6 +123,8 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             MonitorCommand::UpdateMapping(name, bindings) => {
                 self.profile.mapping.profile_name = name;
                 self.profile.mapping.bindings = bindings;
+                // Update cached bindings
+                self.cached_bindings = Arc::new(self.profile.mapping.bindings.clone());
                 info!("Mapping updated");
             }
             MonitorCommand::SetKeyBinding { key, button } => {
@@ -138,23 +150,33 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
 
                 // Insert new assignment
                 self.profile.mapping.bindings.insert(key.clone(), button);
+                // Update cached bindings
+                self.cached_bindings = Arc::new(self.profile.mapping.bindings.clone());
                 info!("Set binding for key: {} -> button {}", key, button);
             }
             MonitorCommand::ReplaceSwitch { key, new_model_id } => {
                  if let Some(switch) = self.profile.switches.get_mut(&key) {
+                     // Audit Log: Before
+                     info!("AUDIT: ReplaceSwitch for Key: {}. Old Model: {}, Presses: {}, Chatters: {}",
+                         key, switch.switch_model_id, switch.stats.total_presses, switch.stats.total_chatters);
+
                      switch.stats = ButtonStats::default();
-                     switch.switch_model_id = new_model_id;
-                     info!("Replaced switch for {}", key);
+                     switch.switch_model_id = new_model_id.clone();
+                     info!("Replaced switch for {} with new model {}", key, new_model_id);
                  } else {
                      self.profile.switches.insert(key.clone(), crate::domain::models::SwitchData {
-                         switch_model_id: new_model_id,
+                         switch_model_id: new_model_id.clone(),
                          stats: ButtonStats::default(),
                      });
-                     info!("Added new switch for {}", key);
+                     info!("Added new switch for {} with model {}", key, new_model_id);
                  }
             }
             MonitorCommand::ResetStats { key } => {
                 if let Some(switch) = self.profile.switches.get_mut(&key) {
+                     // Audit Log: Before
+                     info!("AUDIT: ResetStats for Key: {}. Model: {}, Previous Presses: {}, Previous Chatters: {}",
+                         key, switch.switch_model_id, switch.stats.total_presses, switch.stats.total_chatters);
+
                      switch.stats = ButtonStats::default();
                      info!("Reset stats for {}", key);
                 }
@@ -173,8 +195,13 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         let mut last_process_check = Instant::now();
         let process_check_interval = Duration::from_secs(2);
 
+        let mut last_publish = Instant::now();
+        let publish_interval = Duration::from_millis(16); // ~60Hz throttle
+
         // Main Loop
         'monitor_loop: loop {
+            let mut force_publish = false;
+
             // 1. Process Commands
             while let Ok(cmd) = self.command_rx.try_recv() {
                 if let MonitorCommand::Shutdown = cmd {
@@ -182,7 +209,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                      break 'monitor_loop;
                 }
                 self.handle_command(cmd);
-                self.publish_state(was_connected, was_game_running);
+                force_publish = true; // Always publish after command execution
             }
 
             // 2. Determine Polling Rate
@@ -203,8 +230,8 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                              break 'monitor_loop;
                          }
                          self.handle_command(cmd);
-                         self.publish_state(was_connected, was_game_running);
-                         continue 'monitor_loop;
+                         force_publish = true;
+                         // Don't continue, fall through to logic so we don't skip input polling if time passed
                      }
                 },
                 default(Duration::from_millis(polling_rate)) => {
@@ -218,10 +245,6 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 Ok(_) => true,
                 Err(InputError::Disconnected) => false,
                 Err(e) => {
-                    // Treat other errors as disconnected for safety, but log them
-                    // Or keep 'connected' state if it's transient?
-                    // "Distinguish disconnect reason... reflect in log/state".
-                    // For now, treat as disconnected but specific log.
                     error!("Input Error: {}", e);
                     false
                 }
@@ -231,6 +254,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             if is_connected != was_connected {
                 info!("Connection state changed: {} -> {}", was_connected, is_connected);
                 was_connected = is_connected;
+                force_publish = true;
 
                 if is_connected {
                     // Connected: Enable HighRes Timer
@@ -265,10 +289,6 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                     });
 
                     self.chatter_detector.process_button(key, is_pressed, now_ms, &mut switch_data.stats);
-
-                    // Note: session tracking logic is implicitly handled by `process_button` if we were just incrementing.
-                    // But `process_button` only updates total/session stats.
-                    // We need to manage session reset on game start.
                 }
             }
 
@@ -286,26 +306,28 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 info!("Game running state changed: {} -> {}", was_game_running, is_game_running);
                 if is_game_running {
                     // Game Started: Reset session stats
-                    info!("Game started. Resetting session stats.");
+                    info!("AUDIT: Game started. Resetting session stats.");
                     for switch in self.profile.switches.values_mut() {
                         switch.stats.last_session_presses = 0;
                     }
                 } else {
                     // Game Ended: Generate report
-                    info!("Game ended. Session Report:");
-                    // Ideally we should structure this report better or send event
+                    info!("AUDIT: Game ended. Session Report:");
                     for (key, switch) in &self.profile.switches {
                         if switch.stats.last_session_presses > 0 {
                              info!("  {}: {} presses", key, switch.stats.last_session_presses);
                         }
                     }
-                    // Notify UI if needed (omitted for CLI focus)
                 }
                 was_game_running = is_game_running;
+                force_publish = true;
             }
 
-            // 7. Publish State
-            self.publish_state(is_connected, is_game_running);
+            // 7. Publish State (Throttled)
+            if force_publish || last_publish.elapsed() >= publish_interval {
+                self.publish_state(is_connected, is_game_running);
+                last_publish = Instant::now();
+            }
 
             // 8. Auto Save
             if last_save_at.elapsed() >= save_interval {
@@ -337,39 +359,54 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
     }
 
     fn publish_state(&self, is_connected: bool, is_game_running: bool) {
-        if let Ok(mut state) = self.shared_state.write() {
-            state.is_connected = is_connected;
-            state.is_game_running = is_game_running;
-            state.target_controller_index = self.profile.config.target_controller_index;
-            state.polling_rate_current = if is_connected {
+        // Construct new state
+        let mut switch_stats = HashMap::with_capacity(self.profile.switches.len());
+        for (k, v) in &self.profile.switches {
+            switch_stats.insert(k.clone(), v.stats.clone());
+        }
+
+        // We need to preserve the last status message and save result from the previous state
+        // because they might not be updated in this loop iteration.
+        // Reading from ArcSwap is cheap.
+        let old_state = self.shared_state.load();
+
+        let new_state = MonitorSharedState {
+            is_connected,
+            is_game_running,
+            target_controller_index: self.profile.config.target_controller_index,
+            polling_rate_current: if is_connected {
                 self.profile.config.polling_rate_ms_connected
             } else {
                 self.profile.config.polling_rate_ms_disconnected
-            };
+            },
+            profile_name: self.profile.mapping.profile_name.clone(),
+            bindings: self.cached_bindings.clone(), // Cheap Arc clone
+            switch_stats,
+            last_status_message: old_state.last_status_message.clone(), // Preserve
+            last_save_result: old_state.last_save_result.clone(),       // Preserve
+        };
 
-            state.profile_name = self.profile.mapping.profile_name.clone();
-            state.bindings = self.profile.mapping.bindings.clone();
-
-            state.switch_stats.clear();
-            for (k, v) in &self.profile.switches {
-                state.switch_stats.insert(k.clone(), v.stats.clone());
-            }
-        }
+        self.shared_state.store(Arc::new(new_state));
     }
 
     fn update_status(&self, msg: String) {
-        if let Ok(mut state) = self.shared_state.write() {
-            state.last_status_message = Some(msg);
-        }
+        // For simple status updates, we can just publish a new state with the new message.
+        // Or we can do a quick load-modify-store loop (CAS not strictly needed if we are the only writer).
+        // Since MonitorService is the *only* writer, we can just load and store.
+        let old_state = self.shared_state.load();
+        let mut new_state = (**old_state).clone();
+        new_state.last_status_message = Some(msg);
+        self.shared_state.store(Arc::new(new_state));
     }
 
     fn update_save_result(&self, success: bool, message: String) {
-        if let Ok(mut state) = self.shared_state.write() {
-            state.last_save_result = Some(LastSaveResult {
-                success,
-                message,
-                timestamp: SystemTime::now(),
-            });
-        }
+        let old_state = self.shared_state.load();
+        let mut new_state = (**old_state).clone();
+        new_state.last_save_result = Some(LastSaveResult {
+            success,
+            message,
+            timestamp: SystemTime::now(),
+        });
+        self.shared_state.store(Arc::new(new_state));
     }
 }
