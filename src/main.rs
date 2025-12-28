@@ -13,10 +13,11 @@ use log::{info, error};
 use arc_swap::ArcSwap;
 
 #[cfg(target_os = "windows")]
-use crate::infrastructure::input_source::XInputSource;
+use crate::infrastructure::input_source::DynamicInputSource; // Dynamic is preferred
 use crate::infrastructure::process_monitor::SysinfoProcessMonitor;
 use crate::infrastructure::persistence::FileConfigRepository;
 use crate::usecase::monitor::{MonitorService, MonitorCommand, MonitorSharedState};
+use crate::domain::models::InputMethod;
 
 fn main() {
     // 1. Setup Logging
@@ -33,10 +34,8 @@ fn main() {
     info!("SwitchLifeManager Started");
 
     // 2. Initialize Infrastructure
-    #[cfg(target_os = "windows")]
-    let input_source = XInputSource::new();
-    #[cfg(not(target_os = "windows"))]
-    let input_source = crate::infrastructure::input_source::MockInputSource::new(vec![]); 
+    // Default to DirectInput (via Gilrs) as per new requirements
+    let input_source = DynamicInputSource::new(InputMethod::default());
 
     let process_monitor = SysinfoProcessMonitor::new();
 

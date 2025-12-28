@@ -3,7 +3,6 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use crossbeam_channel::Sender;
 use crate::usecase::monitor::{MonitorCommand, MonitorSharedState};
-use crate::domain::models::LogicalKey;
 
 #[derive(PartialEq)]
 enum AppTab {

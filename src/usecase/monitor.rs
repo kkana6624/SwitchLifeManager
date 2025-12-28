@@ -74,7 +74,7 @@ pub struct MonitorService<I, P, R> {
 
 impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P, R> {
     pub fn new(
-        input_source: I,
+        mut input_source: I,
         process_monitor: P,
         repository: R,
         command_rx: Receiver<MonitorCommand>,
@@ -84,6 +84,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             error!("Failed to load profile, using default: {}", e);
             UserProfile::default()
         });
+
+        // Initialize input method from profile
+        input_source.set_input_method(profile.config.input_method.clone());
 
         let chatter_detector = ChatterDetector::new(profile.config.chatter_threshold_ms);
         let cached_bindings = Arc::new(profile.mapping.bindings.clone());
@@ -120,6 +123,12 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 }
             }
             MonitorCommand::UpdateConfig(cfg) => {
+                // Update input method if changed
+                if cfg.input_method != self.profile.config.input_method {
+                    self.input_source.set_input_method(cfg.input_method.clone());
+                    info!("Input method switched to {:?}", cfg.input_method);
+                }
+
                 self.profile.config = cfg;
                 self.chatter_detector = ChatterDetector::new(self.profile.config.chatter_threshold_ms);
                 info!("Config updated");
