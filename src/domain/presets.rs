@@ -28,14 +28,6 @@ pub fn get_official_controller_map() -> ButtonMap {
     // Select = Button 12 (1 << 11)
     bindings.insert(LogicalKey::E1, 1 << 8);
     bindings.insert(LogicalKey::E2, 1 << 9);
-    bindings.insert(LogicalKey::Start, 1 << 10);
-    bindings.insert(LogicalKey::Select, 1 << 11);
-
-    // Turntable (Provisional)
-    // Often mapped to Button 8? Or Axis?
-    // Task says "Turntable treated as button (bitmask)".
-    // Let's use Button 8 (1 << 7)
-    bindings.insert(LogicalKey::Turntable, 1 << 7);
 
     ButtonMap {
         profile_name: "Official Controller".to_string(),
@@ -79,9 +71,6 @@ mod tests {
         assert!(map.bindings.contains_key(&LogicalKey::Key5));
         assert!(map.bindings.contains_key(&LogicalKey::Key6));
         assert!(map.bindings.contains_key(&LogicalKey::Key7));
-        assert!(map.bindings.contains_key(&LogicalKey::Turntable));
-        assert!(map.bindings.contains_key(&LogicalKey::Start));
-        assert!(map.bindings.contains_key(&LogicalKey::Select));
     }
 
     #[test]
