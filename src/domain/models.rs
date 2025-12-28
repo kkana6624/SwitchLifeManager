@@ -13,11 +13,10 @@ pub enum LogicalKey {
     Key5,
     Key6,
     Key7,
-    Turntable,
-    Start,
-    Select,
     E1,
     E2,
+    E3,
+    E4,
     Other(u16),
 }
 
@@ -31,11 +30,10 @@ impl fmt::Display for LogicalKey {
             LogicalKey::Key5 => write!(f, "Key5"),
             LogicalKey::Key6 => write!(f, "Key6"),
             LogicalKey::Key7 => write!(f, "Key7"),
-            LogicalKey::Turntable => write!(f, "Turntable"),
-            LogicalKey::Start => write!(f, "Start"),
-            LogicalKey::Select => write!(f, "Select"),
             LogicalKey::E1 => write!(f, "E1"),
             LogicalKey::E2 => write!(f, "E2"),
+            LogicalKey::E3 => write!(f, "E3"),
+            LogicalKey::E4 => write!(f, "E4"),
             LogicalKey::Other(id) => write!(f, "Other-{}", id),
         }
     }
@@ -53,11 +51,10 @@ impl FromStr for LogicalKey {
             "Key5" => Ok(LogicalKey::Key5),
             "Key6" => Ok(LogicalKey::Key6),
             "Key7" => Ok(LogicalKey::Key7),
-            "Turntable" => Ok(LogicalKey::Turntable),
-            "Start" => Ok(LogicalKey::Start),
-            "Select" => Ok(LogicalKey::Select),
             "E1" => Ok(LogicalKey::E1),
             "E2" => Ok(LogicalKey::E2),
+            "E3" => Ok(LogicalKey::E3),
+            "E4" => Ok(LogicalKey::E4),
             _ => {
                 if let Some(rest) = s.strip_prefix("Other-") {
                     let id = rest.parse::<u16>().map_err(|_| format!("Invalid Other ID: {}", rest))?;
@@ -115,9 +112,23 @@ pub struct ButtonMap {
 
 impl Default for ButtonMap {
     fn default() -> Self {
+        let mut bindings = HashMap::new();
+        // Default mapping based on user's PhoenixWAN configuration
+        bindings.insert(LogicalKey::Key1, 8);
+        bindings.insert(LogicalKey::Key2, 1);
+        bindings.insert(LogicalKey::Key3, 2);
+        bindings.insert(LogicalKey::Key4, 4);
+        bindings.insert(LogicalKey::Key5, 64);
+        bindings.insert(LogicalKey::Key6, 256);
+        bindings.insert(LogicalKey::Key7, 128);
+        bindings.insert(LogicalKey::E1, 1024);
+        bindings.insert(LogicalKey::E2, 2048);
+        bindings.insert(LogicalKey::E3, 8192);
+        bindings.insert(LogicalKey::E4, 16384);
+
         Self {
             profile_name: "Default".to_string(),
-            bindings: HashMap::new(),
+            bindings,
         }
     }
 }

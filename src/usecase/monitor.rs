@@ -33,10 +33,11 @@ pub struct MonitorSharedState {
     pub profile_name: String,
     // Use Arc to avoid cloning the map every update
     pub bindings: Arc<HashMap<LogicalKey, u16>>,
-    pub switch_stats: HashMap<LogicalKey, ButtonStats>,
+    pub switches: HashMap<LogicalKey, crate::domain::models::SwitchData>,
     
     // Real-time Input State for Tester
     pub current_pressed_keys: HashSet<LogicalKey>,
+    pub raw_button_state: u16,
 
     pub last_status_message: Option<String>,
     pub last_save_result: Option<LastSaveResult>,
@@ -157,8 +158,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
 
                 // Remove old assignment if exists
                 if let Some(old_key) = conflict_key {
-                    self.profile.mapping.bindings.remove(&old_key);
-                    info!("Removed duplicate binding for key: {} (button {})", old_key, button);
+                    // Set to 0 (unbound) instead of removing the key entirely
+                    self.profile.mapping.bindings.insert(old_key.clone(), 0);
+                    info!("Unbound duplicate binding for key: {} (was button {})", old_key, button);
                 }
 
                 // Insert new assignment
@@ -287,7 +289,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
 
             // 5. Process Input
             current_pressed_keys.clear();
+            let mut current_raw_buttons = 0;
             if let Ok(w_buttons) = input_result {
+                current_raw_buttons = w_buttons;
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -349,7 +353,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
 
             // 7. Publish State
             if force_publish || last_publish.elapsed() >= publish_interval {
-                self.publish_state(is_connected, is_game_running, &current_pressed_keys);
+                self.publish_state(is_connected, is_game_running, &current_pressed_keys, current_raw_buttons);
                 last_publish = Instant::now();
             }
 
@@ -382,12 +386,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         self.process_monitor.is_process_running(&self.profile.config.target_process_name)
     }
 
-    fn publish_state(&self, is_connected: bool, is_game_running: bool, pressed_keys: &HashSet<LogicalKey>) {
+    fn publish_state(&self, is_connected: bool, is_game_running: bool, pressed_keys: &HashSet<LogicalKey>, raw_buttons: u16) {
         // Construct new state
-        let mut switch_stats = HashMap::with_capacity(self.profile.switches.len());
-        for (k, v) in &self.profile.switches {
-            switch_stats.insert(k.clone(), v.stats.clone());
-        }
+        let switches = self.profile.switches.clone();
 
         // We need to preserve the last status message and save result from the previous state
         // because they might not be updated in this loop iteration.
@@ -405,8 +406,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             },
             profile_name: self.profile.mapping.profile_name.clone(),
             bindings: self.cached_bindings.clone(), // Cheap Arc clone
-            switch_stats,
+            switches,
             current_pressed_keys: pressed_keys.clone(),
+            raw_button_state: raw_buttons,
             last_status_message: old_state.last_status_message.clone(), // Preserve
             last_save_result: old_state.last_save_result.clone(),       // Preserve
         };
