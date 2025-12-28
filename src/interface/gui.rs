@@ -177,7 +177,7 @@ impl SwitchLifeApp {
                  let model_name = default_models.iter().find(|m| m.id == bulk_model_id).map(|m| m.name.clone()).unwrap_or("Unknown".to_string());
                  
                  ui.label("Model:");
-                 egui::ComboBox::from_id_source("bulk_combo")
+                 egui::ComboBox::from_id_salt("bulk_combo")
                     .selected_text(model_name)
                     .width(180.0)
                     .show_ui(ui, |ui| {
@@ -260,7 +260,7 @@ impl SwitchLifeApp {
                             let mut selected_model_id = switch_data.switch_model_id.clone();
                             let current_model_name = model_info.map(|m| m.name.clone()).unwrap_or_else(|| "Unknown".to_string());
                             
-                            egui::ComboBox::from_id_source(format!("combo_{}", key))
+                            egui::ComboBox::from_id_salt(format!("combo_{}", key))
                                 .selected_text(current_model_name)
                                 .width(200.0)
                                 .show_ui(ui, |ui| {
