@@ -1,5 +1,6 @@
 use eframe::egui;
 use std::sync::Arc;
+use std::collections::HashSet;
 use arc_swap::ArcSwap;
 use crossbeam_channel::Sender;
 use crate::usecase::monitor::{MonitorCommand, MonitorSharedState};
@@ -23,6 +24,7 @@ pub struct SwitchLifeApp {
     command_tx: Sender<MonitorCommand>,
     current_tab: AppTab,
     key_config_state: KeyConfigState,
+    bulk_selected_keys: HashSet<LogicalKey>,
 }
 
 impl SwitchLifeApp {
@@ -37,6 +39,7 @@ impl SwitchLifeApp {
             command_tx,
             current_tab: AppTab::Dashboard,
             key_config_state: KeyConfigState::default(),
+            bulk_selected_keys: HashSet::new(),
         }
     }
 }
@@ -143,7 +146,7 @@ impl eframe::App for SwitchLifeApp {
 }
 
 impl SwitchLifeApp {
-    fn show_dashboard(&self, ui: &mut egui::Ui, state: &MonitorSharedState) {
+    fn show_dashboard(&mut self, ui: &mut egui::Ui, state: &MonitorSharedState) {
         ui.heading("Switch Statistics");
 
         // Sort keys for stable display
@@ -152,6 +155,52 @@ impl SwitchLifeApp {
 
         // Helper to get rated lifespan
         let default_models = crate::domain::models::get_default_switch_models();
+
+        // --- Bulk Action Area ---
+        ui.group(|ui| {
+            ui.heading("Bulk Actions");
+            ui.horizontal(|ui| {
+                if ui.button("Select All").clicked() {
+                    for k in &keys {
+                        self.bulk_selected_keys.insert((*k).clone());
+                    }
+                }
+                if ui.button("Deselect All").clicked() {
+                    self.bulk_selected_keys.clear();
+                }
+            });
+            
+            let mut bulk_model_id = ui.data_mut(|d| d.get_temp::<String>(egui::Id::new("bulk_model_id")))
+                .unwrap_or_else(|| "omron_d2mv_01_1c3".to_string());
+            
+            ui.horizontal(|ui| {
+                 let model_name = default_models.iter().find(|m| m.id == bulk_model_id).map(|m| m.name.clone()).unwrap_or("Unknown".to_string());
+                 
+                 ui.label("Model:");
+                 egui::ComboBox::from_id_source("bulk_combo")
+                    .selected_text(model_name)
+                    .width(180.0)
+                    .show_ui(ui, |ui| {
+                        for model in &default_models {
+                            ui.selectable_value(&mut bulk_model_id, model.id.clone(), &model.name);
+                        }
+                    });
+                 
+                 if ui.button("Apply to Selected").clicked() {
+                     for key in &self.bulk_selected_keys {
+                         let _ = self.command_tx.send(MonitorCommand::ReplaceSwitch {
+                             key: key.clone(),
+                             new_model_id: bulk_model_id.clone(),
+                         });
+                     }
+                 }
+            });
+            ui.label(egui::RichText::new("Note: Applying model resets stats for selected keys.").small().italics());
+            
+            ui.data_mut(|d| d.insert_temp(egui::Id::new("bulk_model_id"), bulk_model_id));
+        });
+        ui.add_space(10.0);
+        // ------------------------
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             for key in keys {
@@ -170,7 +219,6 @@ impl SwitchLifeApp {
                     let remaining_ratio = 1.0 - usage_ratio;
                     
                     // Determine Color
-                    // 100-51: Green, 50-26: Yellow, 25-0: Red
                     let bar_color = if remaining_ratio > 0.50 {
                          egui::Color32::GREEN
                     } else if remaining_ratio > 0.25 {
@@ -179,15 +227,17 @@ impl SwitchLifeApp {
                          egui::Color32::RED
                     };
                     
-                    // Display Ratio (clamp for bar, but text can show negative or 0)
                     let display_ratio = remaining_ratio.clamp(0.0, 1.0) as f32;
 
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(key.to_string()).strong());
-                            // Show model name small
-                            ui.label(egui::RichText::new(format!("({})", switch_data.switch_model_id)).small());
+                            let mut is_selected = self.bulk_selected_keys.contains(key);
+                            if ui.checkbox(&mut is_selected, "").changed() {
+                                if is_selected { self.bulk_selected_keys.insert(key.clone()); }
+                                else { self.bulk_selected_keys.remove(key); }
+                            }
                             
+                            ui.label(egui::RichText::new(key.to_string()).strong());
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.label(format!("Total: {}", stats.total_presses));
                             });
@@ -197,11 +247,43 @@ impl SwitchLifeApp {
                         ui.add_space(2.0);
                         ui.vertical(|ui| {
                             let bar = egui::ProgressBar::new(display_ratio)
-                                .text(format!("Life: {:.1}%", remaining_ratio * 100.0))
+                                .text(format!("Life: {:.1}% ({})", remaining_ratio * 100.0, switch_data.switch_model_id))
                                 .fill(bar_color);
                             ui.add(bar);
                         });
-                        ui.add_space(2.0);
+                        ui.add_space(5.0);
+
+                        // Switch Management Controls
+                        ui.horizontal(|ui| {
+                            ui.label("Switch Model:");
+                            
+                            let mut selected_model_id = switch_data.switch_model_id.clone();
+                            let current_model_name = model_info.map(|m| m.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                            
+                            egui::ComboBox::from_id_source(format!("combo_{}", key))
+                                .selected_text(current_model_name)
+                                .width(200.0)
+                                .show_ui(ui, |ui| {
+                                    for model in &default_models {
+                                        ui.selectable_value(&mut selected_model_id, model.id.clone(), &model.name);
+                                    }
+                                });
+                            
+                            if selected_model_id != switch_data.switch_model_id {
+                                let _ = self.command_tx.send(MonitorCommand::ReplaceSwitch {
+                                    key: key.clone(),
+                                    new_model_id: selected_model_id,
+                                });
+                            }
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                 if ui.button("Reset Stats").clicked() {
+                                     let _ = self.command_tx.send(MonitorCommand::ResetStats { key: key.clone() });
+                                 }
+                            });
+                        });
+
+                        ui.separator();
 
                         ui.horizontal(|ui| {
                             ui.label(format!("Session: {}", stats.last_session_presses));
