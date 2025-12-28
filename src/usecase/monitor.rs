@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use crossbeam_channel::Receiver;
@@ -34,6 +34,10 @@ pub struct MonitorSharedState {
     // Use Arc to avoid cloning the map every update
     pub bindings: Arc<HashMap<LogicalKey, u16>>,
     pub switch_stats: HashMap<LogicalKey, ButtonStats>,
+    
+    // Real-time Input State for Tester
+    pub current_pressed_keys: HashSet<LogicalKey>,
+
     pub last_status_message: Option<String>,
     pub last_save_result: Option<LastSaveResult>,
 }
@@ -198,6 +202,8 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         let mut last_publish = Instant::now();
         let publish_interval = Duration::from_millis(30); // ~33Hz throttle
 
+        let mut current_pressed_keys = HashSet::new();
+
         // Main Loop
         'monitor_loop: loop {
             let mut force_publish = false;
@@ -271,6 +277,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             }
 
             // 5. Process Input
+            current_pressed_keys.clear();
             if let Ok(w_buttons) = input_result {
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -279,6 +286,9 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
 
                 for (key, &mask) in &self.profile.mapping.bindings {
                     let is_pressed = (w_buttons & mask) != 0;
+                    if is_pressed {
+                        current_pressed_keys.insert(key.clone());
+                    }
 
                     let switch_data = self.profile.switches.entry(key.clone()).or_insert_with(|| {
                          crate::domain::models::SwitchData {
@@ -330,7 +340,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
 
             // 7. Publish State
             if force_publish || last_publish.elapsed() >= publish_interval {
-                self.publish_state(is_connected, is_game_running);
+                self.publish_state(is_connected, is_game_running, &current_pressed_keys);
                 last_publish = Instant::now();
             }
 
@@ -363,7 +373,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         self.process_monitor.is_process_running(&self.profile.config.target_process_name)
     }
 
-    fn publish_state(&self, is_connected: bool, is_game_running: bool) {
+    fn publish_state(&self, is_connected: bool, is_game_running: bool, pressed_keys: &HashSet<LogicalKey>) {
         // Construct new state
         let mut switch_stats = HashMap::with_capacity(self.profile.switches.len());
         for (k, v) in &self.profile.switches {
@@ -387,6 +397,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             profile_name: self.profile.mapping.profile_name.clone(),
             bindings: self.cached_bindings.clone(), // Cheap Arc clone
             switch_stats,
+            current_pressed_keys: pressed_keys.clone(),
             last_status_message: old_state.last_status_message.clone(), // Preserve
             last_save_result: old_state.last_save_result.clone(),       // Preserve
         };
