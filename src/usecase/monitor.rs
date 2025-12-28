@@ -196,7 +196,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         let process_check_interval = Duration::from_secs(2);
 
         let mut last_publish = Instant::now();
-        let publish_interval = Duration::from_millis(16); // ~60Hz throttle
+        let publish_interval = Duration::from_millis(30); // ~33Hz throttle
 
         // Main Loop
         'monitor_loop: loop {
@@ -209,7 +209,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                      break 'monitor_loop;
                 }
                 self.handle_command(cmd);
-                force_publish = true; // Always publish after command execution
+                force_publish = true;
             }
 
             // 2. Determine Polling Rate
@@ -231,7 +231,6 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                          }
                          self.handle_command(cmd);
                          force_publish = true;
-                         // Don't continue, fall through to logic so we don't skip input polling if time passed
                      }
                 },
                 default(Duration::from_millis(polling_rate)) => {
@@ -289,6 +288,10 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                     });
 
                     self.chatter_detector.process_button(key, is_pressed, now_ms, &mut switch_data.stats);
+
+                    // Note: session tracking logic is implicitly handled by `process_button` if we were just incrementing.
+                    // But `process_button` only updates total/session stats.
+                    // We need to manage session reset on game start.
                 }
             }
 
@@ -306,24 +309,26 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 info!("Game running state changed: {} -> {}", was_game_running, is_game_running);
                 if is_game_running {
                     // Game Started: Reset session stats
-                    info!("AUDIT: Game started. Resetting session stats.");
+                    info!("Game started. Resetting session stats.");
                     for switch in self.profile.switches.values_mut() {
-                        switch.stats.last_session_presses = 0;
+                        switch.stats.reset_session_stats();
                     }
                 } else {
                     // Game Ended: Generate report
-                    info!("AUDIT: Game ended. Session Report:");
+                    info!("Game ended. Session Report:");
+                    // Ideally we should structure this report better or send event
                     for (key, switch) in &self.profile.switches {
                         if switch.stats.last_session_presses > 0 {
                              info!("  {}: {} presses", key, switch.stats.last_session_presses);
                         }
                     }
+                    // Notify UI if needed (omitted for CLI focus)
                 }
                 was_game_running = is_game_running;
                 force_publish = true;
             }
 
-            // 7. Publish State (Throttled)
+            // 7. Publish State
             if force_publish || last_publish.elapsed() >= publish_interval {
                 self.publish_state(is_connected, is_game_running);
                 last_publish = Instant::now();

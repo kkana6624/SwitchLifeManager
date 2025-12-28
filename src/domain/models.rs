@@ -114,7 +114,19 @@ pub struct ButtonStats {
     pub total_releases: u64,
     pub total_chatters: u64,
     pub total_chatter_releases: u64,
+    
+    // Session stats (reset per game session)
     pub last_session_presses: u64,
+    pub last_session_chatters: u64,
+    pub last_session_chatter_releases: u64,
+}
+
+impl ButtonStats {
+    pub fn reset_session_stats(&mut self) {
+        self.last_session_presses = 0;
+        self.last_session_chatters = 0;
+        self.last_session_chatter_releases = 0;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,6 +238,8 @@ mod tests {
             total_chatters: 5,
             total_chatter_releases: 5,
             last_session_presses: 10,
+            last_session_chatters: 0,
+            last_session_chatter_releases: 0,
         };
         profile.switches.insert(LogicalKey::Key1, SwitchData {
             switch_model_id: "omron".to_string(),
