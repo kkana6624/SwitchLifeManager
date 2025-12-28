@@ -9,6 +9,7 @@ use crate::domain::models::LogicalKey;
 #[derive(PartialEq)]
 enum AppTab {
     Dashboard,
+    Session,
     Tester,
     Settings,
 }
@@ -105,6 +106,7 @@ impl eframe::App for SwitchLifeApp {
             // Tabs
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.current_tab, AppTab::Dashboard, "Dashboard");
+                ui.selectable_value(&mut self.current_tab, AppTab::Session, "Session Stats");
                 ui.selectable_value(&mut self.current_tab, AppTab::Tester, "Input Tester");
                 ui.selectable_value(&mut self.current_tab, AppTab::Settings, "Settings");
             });
@@ -113,6 +115,9 @@ impl eframe::App for SwitchLifeApp {
             match self.current_tab {
                 AppTab::Dashboard => {
                     self.show_dashboard(ui, &state);
+                }
+                AppTab::Session => {
+                    self.show_session_stats(ui, &state);
                 }
                 AppTab::Tester => {
                     self.show_tester(ui, &state);
@@ -146,6 +151,88 @@ impl eframe::App for SwitchLifeApp {
 }
 
 impl SwitchLifeApp {
+    fn show_session_stats(&self, ui: &mut egui::Ui, state: &MonitorSharedState) {
+        ui.heading("Session Statistics");
+        
+        // Status with better visibility on light backgrounds
+        if state.is_game_running {
+             ui.colored_label(egui::Color32::from_rgb(0, 150, 0), "● Game is Running - Recording Stats...");
+        } else {
+             ui.colored_label(egui::Color32::from_rgb(0, 100, 200), "■ Game Stopped - Showing Last Session Result");
+        }
+        ui.add_space(10.0);
+
+        let mut keys: Vec<_> = state.switches.keys().collect();
+        keys.sort_by_key(|k| k.to_string());
+        
+        let mut session_total_presses = 0;
+        let mut session_total_chatters = 0;
+
+        // Calculate totals for session
+        for key in &keys {
+            if let Some(switch) = state.switches.get(key) {
+                session_total_presses += switch.stats.last_session_presses;
+                session_total_chatters += switch.stats.last_session_chatters;
+            }
+        }
+
+        // Summary
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("Session Presses: {}", session_total_presses)).strong().size(18.0));
+                ui.add_space(20.0);
+                
+                let chatter_text = format!("Session Chatters: {}", session_total_chatters);
+                if session_total_chatters > 0 {
+                    ui.label(egui::RichText::new(chatter_text).color(egui::Color32::RED).strong().size(18.0));
+                } else {
+                    ui.label(egui::RichText::new(chatter_text).strong().size(18.0));
+                }
+            });
+        });
+        ui.add_space(10.0);
+
+        egui::Grid::new("session_stats_grid").striped(true).spacing([40.0, 10.0]).show(ui, |ui| {
+            ui.label(egui::RichText::new("Key").strong());
+            ui.label(egui::RichText::new("Presses").strong());
+            ui.label(egui::RichText::new("Chatters").strong());
+            ui.label(egui::RichText::new("Rate").strong());
+            ui.end_row();
+
+            for key in keys {
+                if let Some(switch) = state.switches.get(key) {
+                    let stats = &switch.stats;
+                    
+                    ui.label(key.to_string());
+                    ui.label(format!("{}", stats.last_session_presses));
+                    
+                    if stats.last_session_chatters > 0 {
+                        ui.colored_label(egui::Color32::RED, format!("{}", stats.last_session_chatters));
+                    } else {
+                        ui.label("0");
+                    }
+
+                    let rate = if stats.last_session_presses > 0 {
+                        (stats.last_session_chatters as f64 / (stats.last_session_presses + stats.last_session_chatters) as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    
+                    let rate_text = format!("{:.2}%", rate);
+                    if rate > 1.0 {
+                         ui.colored_label(egui::Color32::RED, rate_text);
+                    } else if rate > 0.0 {
+                         ui.colored_label(egui::Color32::from_rgb(180, 120, 0), rate_text); // Darker Gold/Orange
+                    } else {
+                         ui.label(rate_text);
+                    }
+                    
+                    ui.end_row();
+                }
+            }
+        });
+    }
+
     fn show_dashboard(&mut self, ui: &mut egui::Ui, state: &MonitorSharedState) {
         ui.heading("Switch Statistics");
 
