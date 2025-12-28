@@ -19,13 +19,37 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build for Release
-        run: cargo build --release --locked
+        # Use --verbose to help debug if build fails
+        run: cargo build --release --locked --verbose
+
+      - name: Prepare Release Artifacts
+        shell: powershell
+        run: |
+          # Create a directory for artifacts
+          mkdir release_pkg
+          
+          # Copy executable
+          Copy-Item target/release/switch_life_manager.exe -Destination release_pkg/SwitchLifeManager.exe
+          
+          # Copy documentation (if exists)
+          if (Test-Path README.md) { Copy-Item README.md -Destination release_pkg/ }
+          if (Test-Path LICENSE) { Copy-Item LICENSE -Destination release_pkg/ }
+          
+          # Get Tag Name
+          $TAG_NAME = "${{ github.ref_name }}"
+          $ZIP_NAME = "SwitchLifeManager-${TAG_NAME}-windows-x86_64.zip"
+          
+          # Compress
+          Compress-Archive -Path release_pkg/* -DestinationPath $ZIP_NAME
+          
+          # Output for next step
+          echo "ASSET_PATH=$ZIP_NAME" >> $env:GITHUB_ENV
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v1
         with:
-          # target/release/ に生成された .exe を指定
-          # プロジェクト名に合わせて書き換えてください
-          files: target/release/SwitchLifeManager.exe
+          files: ${{ env.ASSET_PATH }}
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
