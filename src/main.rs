@@ -3,11 +3,12 @@ pub mod usecase;
 pub mod infrastructure;
 pub mod interface;
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc; // RwLock no longer needed for shared_state
 use std::thread;
 use crossbeam_channel::bounded;
 use simplelog::*;
 use log::{info, error};
+use arc_swap::ArcSwap;
 
 #[cfg(target_os = "windows")]
 use crate::infrastructure::input_source::XInputSource;
@@ -46,7 +47,8 @@ fn main() {
     let repository = FileConfigRepository::new(repo_path);
 
     // 3. Initialize Shared State and Channels
-    let shared_state = Arc::new(RwLock::new(MonitorSharedState::default()));
+    // Refactored to use ArcSwap for lock-free reads from UI/Main thread
+    let shared_state = Arc::new(ArcSwap::from_pointee(MonitorSharedState::default()));
     let (cmd_tx, cmd_rx) = bounded(10);
     let cmd_tx_clone = cmd_tx.clone();
 
