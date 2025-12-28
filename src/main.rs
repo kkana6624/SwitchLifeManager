@@ -37,8 +37,12 @@ fn main() {
 
     let process_monitor = SysinfoProcessMonitor::new();
 
-    // Determine config path (local directory for CLI simplicity)
-    let repo_path = std::path::PathBuf::from("profile.json");
+    // Determine config path
+    let repo_path = FileConfigRepository::get_default_config_path().unwrap_or_else(|e| {
+        error!("Failed to get default config path: {}, falling back to local 'profile.json'", e);
+        std::path::PathBuf::from("profile.json")
+    });
+    info!("Using config path: {:?}", repo_path);
     let repository = FileConfigRepository::new(repo_path);
 
     // 3. Initialize Shared State and Channels

@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 crossbeam-channel = "0.5.15"
 ctrlc = "3.5.1"
+directories = "6.0.0"
 env_logger = "0.11.8"
 log = "0.4.29"
 serde = { version = "1.0.228", features = ["derive"] }
