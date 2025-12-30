@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "IIDX Controller Life Manager"
 authors = ["kkana6624"]
 edition = "2021"
+default-run = "switch_life_manager"
 
 [lib]
 name = "switch_life_manager_lib"
