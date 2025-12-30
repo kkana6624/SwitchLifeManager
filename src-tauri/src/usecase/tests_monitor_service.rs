@@ -17,7 +17,7 @@ mod tests {
     struct MockInputSource;
 
     impl InputSource for MockInputSource {
-        fn get_state(&mut self, _controller_index: u32) -> Result<u16, InputError> {
+        fn get_state(&mut self, _controller_index: u32) -> Result<u32, InputError> {
             Ok(0)
         }
     }
@@ -72,11 +72,54 @@ mod tests {
         // Verify internal state updated
         assert_eq!(service.profile.config.target_controller_index, 2);
         assert_eq!(service.profile.config.target_process_name, "test_game.exe");
+    }
 
-        // Note: handle_command does NOT automatically publish state. The loop does.
-        // So shared_state is NOT updated yet. This is expected behavior of the architecture.
-        // We can manually trigger publish_state if it were public, but it's private.
-        // However, we can run the loop for a short time or verify via `service.profile` which we did.
+    #[test]
+    fn test_reset_stats_and_replace_switch() {
+        use crate::domain::models::{LogicalKey, SwitchData, ButtonStats};
+        use std::collections::HashMap;
+
+        let (_tx, rx) = bounded(10);
+        let shared_state = Arc::new(ArcSwap::from_pointee(MonitorSharedState::default()));
+
+        // Setup profile with some data
+        let mut profile = UserProfile::default();
+        let key = LogicalKey::Key1;
+        profile.switches.insert(key.clone(), SwitchData {
+            switch_model_id: "old_model".to_string(),
+            stats: ButtonStats {
+                total_presses: 100,
+                total_chatters: 10,
+                ..Default::default()
+            },
+        });
+
+        let repo = MockRepository { profile };
+        let input = MockInputSource;
+        let process = MockProcessMonitor;
+
+        let mut service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+
+        // 1. Test ResetStats
+        service.handle_command(MonitorCommand::ResetStats { key: key.clone() });
+        
+        let switch = service.profile.switches.get(&key).unwrap();
+        assert_eq!(switch.stats.total_presses, 0);
+        assert_eq!(switch.stats.total_chatters, 0);
+        assert_eq!(switch.switch_model_id, "old_model"); // Model should be unchanged
+
+        // Simulate usage again
+        service.profile.switches.get_mut(&key).unwrap().stats.total_presses = 50;
+
+        // 2. Test ReplaceSwitch
+        service.handle_command(MonitorCommand::ReplaceSwitch { 
+            key: key.clone(), 
+            new_model_id: "new_model".to_string() 
+        });
+
+        let switch = service.profile.switches.get(&key).unwrap();
+        assert_eq!(switch.stats.total_presses, 0); // Should be reset
+        assert_eq!(switch.switch_model_id, "new_model"); // Model should be changed
     }
 
     #[test]

@@ -15,7 +15,7 @@ pub struct SysinfoProcessMonitor {
 impl SysinfoProcessMonitor {
     pub fn new() -> Self {
         Self {
-            system: System::new_all(),
+            system: System::new(),
         }
     }
 }

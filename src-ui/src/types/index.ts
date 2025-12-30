@@ -29,7 +29,7 @@ export interface SwitchData {
 
 export interface ButtonMap {
   profile_name: string;
-  bindings: Record<string, number>; // LogicalKey -> Button Mask (u16)
+  bindings: Record<string, number>; // LogicalKey -> Button Mask (u32)
 }
 
 export interface LastSaveResult {

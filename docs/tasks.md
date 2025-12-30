@@ -64,9 +64,9 @@
     - [x] Listen for Tauri events. (useTauriStore hook)
 
 ## Phase 4: Testing & Release
-- [ ] Verify Tray Functionality (Hide/Show, Quit, no ghost process).
-- [ ] Verify Input Monitoring (DirectInput/XInput, Hotplug).
-- [ ] Verify Key Config (Learning, Duplicate handling).
-- [ ] Verify Data Persistence (Atomic Save, Migration).
-- [ ] Verify Process Monitoring (Game start/exit detection).
+- [x] Verify Tray Functionality (Hide/Show, Quit, no ghost process).
+- [x] Verify Input Monitoring (DirectInput/XInput, Hotplug).
+- [x] Verify Key Config (Learning, Duplicate handling).
+- [x] Verify Data Persistence (Atomic Save, Migration).
+- [x] Verify Process Monitoring (Game start/exit detection).
 - [ ] Build Release (`cargo tauri build`).

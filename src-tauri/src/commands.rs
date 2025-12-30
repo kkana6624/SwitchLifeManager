@@ -34,7 +34,7 @@ pub fn reset_to_default_mapping(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-pub fn set_binding(state: State<'_, AppState>, key: LogicalKey, button: u16) {
+pub fn set_binding(state: State<'_, AppState>, key: LogicalKey, button: u32) {
     let _ = state.command_tx.send(MonitorCommand::SetKeyBinding { key, button });
 }
 

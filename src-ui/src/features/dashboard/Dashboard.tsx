@@ -1,13 +1,17 @@
-import { Container, Grid, Card, Text, Progress, Group, Select, Button, Stack, Title, Badge } from '@mantine/core';
+import { Container, Grid, Card, Text, Progress, Group, Select, Button, Stack, Title, Badge, Checkbox, Paper } from '@mantine/core';
 import { MonitorSharedState, SwitchData } from '../../types';
 import { SWITCH_MODELS, ORDERED_KEYS } from '../../constants';
 import { invoke } from '@tauri-apps/api/core';
+import { useState } from 'react';
 
 interface DashboardProps {
     state: MonitorSharedState;
 }
 
 export function Dashboard({ state }: DashboardProps) {
+    const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+    const [bulkModelId, setBulkModelId] = useState<string | null>(null);
+
     const getSwitchModel = (id: string) => {
         return SWITCH_MODELS.find(m => m.id === id) || SWITCH_MODELS.find(m => m.id === "generic_unknown")!;
     };
@@ -36,9 +40,67 @@ export function Dashboard({ state }: DashboardProps) {
         }
     };
 
+    const toggleSelection = (key: string) => {
+        setSelectedKeys(prev => 
+            prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
+        );
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedKeys.length === ORDERED_KEYS.length) {
+            setSelectedKeys([]);
+        } else {
+            setSelectedKeys([...ORDERED_KEYS]);
+        }
+    };
+
+    const handleBulkReset = () => {
+        if (selectedKeys.length === 0) return;
+        if (confirm(`Reset stats for ${selectedKeys.length} selected keys?`)) {
+            selectedKeys.forEach(key => invoke('reset_stats', { key }));
+            setSelectedKeys([]);
+        }
+    };
+
+    const handleBulkApplyModel = () => {
+        if (selectedKeys.length === 0 || !bulkModelId) return;
+        if (confirm(`Change model to ${bulkModelId} for ${selectedKeys.length} keys? Stats will be reset.`)) {
+            selectedKeys.forEach(key => invoke('replace_switch', { key, newModelId: bulkModelId }));
+            setSelectedKeys([]);
+        }
+    };
+
     return (
         <Container fluid>
-            <Title order={4} mb="md">Switch Life Expectancy</Title>
+            <Group justify="space-between" mb="md">
+                <Title order={4}>Switch Life Expectancy</Title>
+                <Button variant="default" size="xs" onClick={toggleSelectAll}>
+                    {selectedKeys.length === ORDERED_KEYS.length ? "Deselect All" : "Select All"}
+                </Button>
+            </Group>
+
+            {selectedKeys.length > 0 && (
+                <Paper p="md" mb="lg" bg="blue.0" withBorder>
+                    <Title order={5} mb="xs">Bulk Actions ({selectedKeys.length} selected)</Title>
+                    <Group align="end">
+                        <Select 
+                            label="Change Model"
+                            placeholder="Select Switch Model"
+                            data={SWITCH_MODELS.map(m => ({ value: m.id, label: m.name }))}
+                            value={bulkModelId}
+                            onChange={setBulkModelId}
+                            style={{ flexGrow: 1, maxWidth: 300 }}
+                        />
+                        <Button onClick={handleBulkApplyModel} disabled={!bulkModelId}>
+                            Apply Model
+                        </Button>
+                        <Button color="red" variant="light" onClick={handleBulkReset}>
+                            Reset Stats
+                        </Button>
+                    </Group>
+                </Paper>
+            )}
+
             <Grid>
                 {ORDERED_KEYS.map(key => {
                     const switchData = state.switches[key] || {
@@ -49,12 +111,25 @@ export function Dashboard({ state }: DashboardProps) {
                     const model = getSwitchModel(switchData.switch_model_id);
                     const percentage = getLifeExpectancyPercentage(switchData.stats.total_presses, model.rated_lifespan_presses);
                     const color = getProgressColor(percentage);
+                    const isSelected = selectedKeys.includes(key);
 
                     return (
                         <Grid.Col key={key} span={{ base: 12, md: 6, lg: 4 }}>
-                            <Card shadow="sm" padding="lg" radius="md" withBorder>
+                            <Card 
+                                shadow="sm" 
+                                padding="lg" 
+                                radius="md" 
+                                withBorder
+                                style={{ borderColor: isSelected ? 'var(--mantine-color-blue-5)' : undefined, borderWidth: isSelected ? 2 : 1 }}
+                            >
                                 <Group justify="space-between" mb="xs">
-                                    <Text fw={700}>{key}</Text>
+                                    <Group>
+                                        <Checkbox 
+                                            checked={isSelected}
+                                            onChange={() => toggleSelection(key)}
+                                        />
+                                        <Text fw={700}>{key}</Text>
+                                    </Group>
                                     <Badge color={color} variant="light">
                                         {percentage.toFixed(1)}% Life
                                     </Badge>
@@ -91,7 +166,7 @@ export function Dashboard({ state }: DashboardProps) {
                                         onChange={(val) => val && handleModelChange(key, val)}
                                         style={{ flexGrow: 1 }}
                                     />
-                                    <Button size="xs" color="red" variant="subtle" onClick={() => handleResetStats(key)}>
+                                    <Button size="xs" color="red" variant="light" onClick={() => handleResetStats(key)}>
                                         Reset
                                     </Button>
                                 </Group>

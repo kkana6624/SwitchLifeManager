@@ -32,12 +32,12 @@ pub struct MonitorSharedState {
 
     pub profile_name: String,
     // Use Arc to avoid cloning the map every update
-    pub bindings: Arc<HashMap<LogicalKey, u16>>,
+    pub bindings: Arc<HashMap<LogicalKey, u32>>,
     pub switches: HashMap<LogicalKey, crate::domain::models::SwitchData>,
     
     // Real-time Input State for Tester
     pub current_pressed_keys: HashSet<LogicalKey>,
-    pub raw_button_state: u16,
+    pub raw_button_state: u32,
 
     pub last_status_message: Option<String>,
     pub last_save_result: Option<LastSaveResult>,
@@ -45,8 +45,8 @@ pub struct MonitorSharedState {
 
 pub enum MonitorCommand {
     UpdateConfig(AppConfig),
-    UpdateMapping(String, HashMap<LogicalKey, u16>), // Preserved for bulk updates (presets)
-    SetKeyBinding { key: LogicalKey, button: u16 }, // Added for single key update with conflict resolution
+    UpdateMapping(String, HashMap<LogicalKey, u32>), // Preserved for bulk updates (presets)
+    SetKeyBinding { key: LogicalKey, button: u32 }, // Added for single key update with conflict resolution
     ReplaceSwitch { key: LogicalKey, new_model_id: String },
     ResetStats { key: LogicalKey },
     Shutdown,
@@ -70,7 +70,7 @@ pub struct MonitorService<I, P, R> {
     high_res_timer: Option<HighResolutionTimer>,
 
     // Cached Arc for bindings to avoid recreating it when not changed
-    cached_bindings: Arc<HashMap<LogicalKey, u16>>,
+    cached_bindings: Arc<HashMap<LogicalKey, u32>>,
 }
 
 impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P, R> {
@@ -386,7 +386,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         self.process_monitor.is_process_running(&self.profile.config.target_process_name)
     }
 
-    fn publish_state(&self, is_connected: bool, is_game_running: bool, pressed_keys: &HashSet<LogicalKey>, raw_buttons: u16) {
+    fn publish_state(&self, is_connected: bool, is_game_running: bool, pressed_keys: &HashSet<LogicalKey>, raw_buttons: u32) {
         // Construct new state
         let switches = self.profile.switches.clone();
 

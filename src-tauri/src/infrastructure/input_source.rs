@@ -5,11 +5,11 @@ use std::collections::VecDeque;
 
 // --- Mock ---
 pub struct MockInputSource {
-    pub states: VecDeque<Result<u16, InputError>>,
+    pub states: VecDeque<Result<u32, InputError>>,
 }
 
 impl MockInputSource {
-    pub fn new(states: Vec<Result<u16, InputError>>) -> Self {
+    pub fn new(states: Vec<Result<u32, InputError>>) -> Self {
         Self {
             states: states.into(),
         }
@@ -17,7 +17,7 @@ impl MockInputSource {
 }
 
 impl InputSource for MockInputSource {
-    fn get_state(&mut self, _controller_index: u32) -> Result<u16, InputError> {
+    fn get_state(&mut self, _controller_index: u32) -> Result<u32, InputError> {
         self.states.pop_front().unwrap_or(Ok(0))
     }
 }
@@ -52,7 +52,7 @@ impl GilrsInputSource {
 }
 
 impl InputSource for GilrsInputSource {
-    fn get_state(&mut self, controller_index: u32) -> Result<u16, InputError> {
+    fn get_state(&mut self, controller_index: u32) -> Result<u32, InputError> {
         // 1. Pump events to update state
         while let Some(_) = self.gilrs.next_event() {}
 
@@ -82,7 +82,7 @@ impl InputSource for GilrsInputSource {
         // It also provides access to raw button code via `state().button_data(code)`.
         
         let gamepad = self.gilrs.gamepad(gamepad_id);
-        let mut bitmap: u16 = 0;
+        let mut bitmap: u32 = 0;
 
         // Try standard buttons first (common for HID mappings)
         // This might need adjustment for specific controllers.
@@ -106,7 +106,7 @@ impl InputSource for GilrsInputSource {
             (Button::DPadUp, 15), (Button::DPadDown, 16), (Button::DPadLeft, 17), (Button::DPadRight, 18),
         ];
 
-        // Construct a u16 bitmap. 
+        // Construct a u32 bitmap. 
         // Note: u16 is small for modern controllers (can have 32+ buttons).
         // XInput wButtons is u16.
         // If the user's controller has buttons mapping to indices > 15, we might lose them with u16.
@@ -117,7 +117,7 @@ impl InputSource for GilrsInputSource {
         // If the controller is generic, Gilrs might map Button 1 to South, Button 2 to East, etc.
         
         for (btn, bit_pos) in buttons.iter() {
-            if *bit_pos < 16 && gamepad.is_pressed(*btn) {
+            if *bit_pos < 32 && gamepad.is_pressed(*btn) {
                 bitmap |= 1 << bit_pos;
             }
         }
@@ -139,14 +139,14 @@ impl XInputSource {
 
 #[cfg(target_os = "windows")]
 impl InputSource for XInputSource {
-    fn get_state(&mut self, controller_index: u32) -> Result<u16, InputError> {
+    fn get_state(&mut self, controller_index: u32) -> Result<u32, InputError> {
         use windows::Win32::UI::Input::XboxController::{XInputGetState, XINPUT_STATE};
 
         let mut state = XINPUT_STATE::default();
         let result = unsafe { XInputGetState(controller_index, &mut state) };
 
         if result == 0 { // ERROR_SUCCESS
-            Ok(state.Gamepad.wButtons.0 as u16)
+            Ok(state.Gamepad.wButtons.0 as u32)
         } else if result == 1167 { // ERROR_DEVICE_NOT_CONNECTED
              Err(InputError::Disconnected)
         } else {
@@ -186,7 +186,7 @@ impl DynamicInputSource {
 }
 
 impl InputSource for DynamicInputSource {
-    fn get_state(&mut self, controller_index: u32) -> Result<u16, InputError> {
+    fn get_state(&mut self, controller_index: u32) -> Result<u32, InputError> {
         match self {
             #[cfg(target_os = "windows")]
             Self::XInput(s) => s.get_state(controller_index),

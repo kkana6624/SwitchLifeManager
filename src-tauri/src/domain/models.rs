@@ -107,7 +107,7 @@ impl Default for AppConfig {
 pub struct ButtonMap {
     pub profile_name: String,
     #[serde_as(as = "HashMap<serde_with::DisplayFromStr, _>")]
-    pub bindings: HashMap<LogicalKey, u16>,
+    pub bindings: HashMap<LogicalKey, u32>,
 }
 
 impl Default for ButtonMap {

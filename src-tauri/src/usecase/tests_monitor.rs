@@ -17,12 +17,12 @@ pub mod tests {
 
     #[derive(Clone)]
     struct MockInputSource {
-        pub state_val: Arc<Mutex<u16>>,
+        pub state_val: Arc<Mutex<u32>>,
         pub is_disconnected: Arc<Mutex<bool>>,
     }
 
     impl InputSource for MockInputSource {
-        fn get_state(&mut self, _controller_index: u32) -> Result<u16, InputError> {
+        fn get_state(&mut self, _controller_index: u32) -> Result<u32, InputError> {
             let is_disc = *self.is_disconnected.lock().unwrap();
             if is_disc {
                 Err(InputError::Disconnected)

@@ -44,6 +44,20 @@ pub fn run() {
             commands::reset_to_default_mapping
         ])
         .setup(|app| {
+            // --- Logger Setup ---
+            if let Ok(config_path) = FileConfigRepository::get_default_config_path() {
+                let log_path = config_path.with_file_name("app.log");
+                if let Some(parent) = log_path.parent() {
+                     let _ = std::fs::create_dir_all(parent);
+                }
+                
+                let _ = simplelog::WriteLogger::init(
+                    simplelog::LevelFilter::Info,
+                    simplelog::Config::default(),
+                    std::fs::File::create(log_path).unwrap_or_else(|_| std::fs::File::create("switch_life_manager.log").unwrap()),
+                );
+            }
+
             // --- Monitor Setup ---
             let (command_tx, command_rx) = unbounded();
             let shared_state = Arc::new(ArcSwap::from_pointee(MonitorSharedState::default()));
@@ -109,18 +123,14 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| match event {
-                    TrayIconEvent::Click {
+                    TrayIconEvent::DoubleClick {
                         button: MouseButton::Left,
                         ..
                     } => {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
-                            if window.is_visible().unwrap_or(false) {
-                                let _ = window.hide();
-                            } else {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                            let _ = window.show();
+                            let _ = window.set_focus();
                         }
                     }
                     _ => {}
