@@ -5,6 +5,7 @@ use crossbeam_channel::Receiver;
 use anyhow::Result;
 use log::{error, info};
 use arc_swap::ArcSwap;
+use serde::Serialize;
 
 use crate::domain::models::{AppConfig, ButtonStats, LogicalKey, UserProfile};
 use crate::domain::interfaces::InputSource;
@@ -15,7 +16,7 @@ use crate::infrastructure::timer::HighResolutionTimer;
 use crate::usecase::input_monitor::ChatterDetector;
 
 /// Result of the last save operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LastSaveResult {
     pub success: bool,
     pub message: String,
@@ -23,12 +24,11 @@ pub struct LastSaveResult {
 }
 
 /// Snapshot of the monitor state for UI consumption.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct MonitorSharedState {
     pub is_connected: bool,
     pub is_game_running: bool,
-    pub target_controller_index: u32,
-    pub polling_rate_current: u64,
+    pub config: AppConfig,
 
     pub profile_name: String,
     // Use Arc to avoid cloning the map every update
@@ -398,12 +398,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         let new_state = MonitorSharedState {
             is_connected,
             is_game_running,
-            target_controller_index: self.profile.config.target_controller_index,
-            polling_rate_current: if is_connected {
-                self.profile.config.polling_rate_ms_connected
-            } else {
-                self.profile.config.polling_rate_ms_disconnected
-            },
+            config: self.profile.config.clone(),
             profile_name: self.profile.mapping.profile_name.clone(),
             bindings: self.cached_bindings.clone(), // Cheap Arc clone
             switches,
