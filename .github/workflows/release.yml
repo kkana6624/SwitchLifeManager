@@ -1,3 +1,11 @@
+# リリース手順:
+# 1. バージョンタグ（例: v1.0.0）を作成して push するとこのワークフローが起動します。
+#    git tag v1.0.0
+#    git push origin v1.0.0
+# 2. 自動的に Tauri によるビルドが行われ、以下のファイルが GitHub Release にアップロードされます。
+#    - SwitchLifeManager-vX.X.X-windows-x86_64.zip (ポータブル版 exe)
+#    - *.exe (インストーラー形式)
+
 name: Release
 
 on:
@@ -15,55 +23,56 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # フロントエンド (React/Vite) ビルド用の Node.js セットアップ
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
+      # バックエンド (Rust) ビルド用の Rust ツールチェーン
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # 依存関係のインストール (ルートの tauri cli と src-ui の React 依存)
       - name: Install Frontend Dependencies
         run: |
           npm install
           npm install --prefix src-ui
 
+      # Tauri アプリケーションのビルド
+      # frontendDist のビルドも tauri build 内の beforeBuildCommand で実行される
       - name: Build for Release
-        # Runs 'tauri build' via the root package.json script
         run: npm run build
 
+      # リリース用アセットの整理とパッケージング
       - name: Prepare Release Artifacts
         shell: powershell
         run: |
-          # Create a directory for artifacts
+          # アーティファクト一時ディレクトリ
           mkdir release_pkg
           
-          # Copy executable (Path is within src-tauri/target/release for Tauri apps)
-          # Note: Cargo.toml name is 'switch_life_manager', so the binary is 'switch_life_manager.exe'
+          # 実行ファイルのコピー (Cargo.toml の name が switch_life_manager のため)
           Copy-Item src-tauri/target/release/switch_life_manager.exe -Destination release_pkg/SwitchLifeManager.exe
           
-          # Copy documentation (if exists)
+          # ドキュメント類の同梱
           if (Test-Path README.md) { Copy-Item README.md -Destination release_pkg/ }
           if (Test-Path LICENSE) { Copy-Item LICENSE -Destination release_pkg/ }
           
-          # Get Tag Name
+          # zip パッケージの作成
           $TAG_NAME = "${{ github.ref_name }}"
           $ZIP_NAME = "SwitchLifeManager-${TAG_NAME}-windows-x86_64.zip"
-          
-          # Compress
           Compress-Archive -Path release_pkg/* -DestinationPath $ZIP_NAME
           
-          # Find Installer (Optional: Include the NSIS installer if generated)
-          # The default path for NSIS bundle is src-tauri/target/release/bundle/nsis/*.exe
+          # インストーラー (NSIS) の探索
           $INSTALLER_PATH = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1 -ExpandProperty FullName
           if ($INSTALLER_PATH) {
             echo "Found Installer: $INSTALLER_PATH"
             echo "INSTALLER_PATH=$INSTALLER_PATH" >> $env:GITHUB_ENV
           }
 
-          # Output for next step
           echo "ASSET_PATH=$ZIP_NAME" >> $env:GITHUB_ENV
 
+      # GitHub Release の作成とファイルのアップロード
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v1
         with:
