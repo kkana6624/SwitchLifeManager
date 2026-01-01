@@ -15,12 +15,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Frontend Dependencies
+        run: |
+          npm install
+          npm install --prefix src-ui
+
       - name: Build for Release
-        # Use --verbose to help debug if build fails
-        run: cargo build --release --locked --verbose
+        # Runs 'tauri build' via the root package.json script
+        run: npm run build
 
       - name: Prepare Release Artifacts
         shell: powershell
@@ -28,8 +38,9 @@ jobs:
           # Create a directory for artifacts
           mkdir release_pkg
           
-          # Copy executable
-          Copy-Item target/release/switch_life_manager.exe -Destination release_pkg/SwitchLifeManager.exe
+          # Copy executable (Path is within src-tauri/target/release for Tauri apps)
+          # Note: Cargo.toml name is 'switch_life_manager', so the binary is 'switch_life_manager.exe'
+          Copy-Item src-tauri/target/release/switch_life_manager.exe -Destination release_pkg/SwitchLifeManager.exe
           
           # Copy documentation (if exists)
           if (Test-Path README.md) { Copy-Item README.md -Destination release_pkg/ }
@@ -42,13 +53,23 @@ jobs:
           # Compress
           Compress-Archive -Path release_pkg/* -DestinationPath $ZIP_NAME
           
+          # Find Installer (Optional: Include the NSIS installer if generated)
+          # The default path for NSIS bundle is src-tauri/target/release/bundle/nsis/*.exe
+          $INSTALLER_PATH = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1 -ExpandProperty FullName
+          if ($INSTALLER_PATH) {
+            echo "Found Installer: $INSTALLER_PATH"
+            echo "INSTALLER_PATH=$INSTALLER_PATH" >> $env:GITHUB_ENV
+          }
+
           # Output for next step
           echo "ASSET_PATH=$ZIP_NAME" >> $env:GITHUB_ENV
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v1
         with:
-          files: ${{ env.ASSET_PATH }}
+          files: |
+            ${{ env.ASSET_PATH }}
+            ${{ env.INSTALLER_PATH }}
           draft: false
           prerelease: false
         env:
