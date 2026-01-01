@@ -1,5 +1,8 @@
 # IIDXコントローラー寿命管理ツール "SwitchLifeManager" 詳細設計書 (Rev. 2)
 
+> 追補（Rev. 3）: GUI基盤を eframe から **Tauri v2（React UI）** へ移行する。
+> 本書のDomain/Usecase/監視ループ/永続化の基本方針は維持しつつ、UI層・常駐（トレイ）・IPCの設計を更新する。
+
 ## 1. プロジェクト概要
 本ソフトウェアは、Beatmania IIDX INFINITAS等のリズムゲームで使用されるコントローラーのマイクロスイッチ寿命を可視化・管理するためのツールである。
 高精度の入力監視によりハードウェアの消耗度を管理し、チャタリング（多重反応）を検出する。
@@ -10,15 +13,14 @@ Rev.2では、接続安定性、汎用的なキーマッピング、データの
 ### 2.1 機能要件
     *   **高精度入力監視と接続管理**:
     *   **DirectInput (HID) / XInput ハイブリッド対応**:
-        *   **DirectInput (HID)**: デフォルトの入力方式。DJ DAO PhoenixWAN等のIIDXコントローラー（HID準拠）をサポートするため、汎用的なゲームパッドライブラリ (`gilrs` 等) を採用する。
+        *   **DirectInput (HID)**: デフォルトの入力方式。DJ DAO PhoenixWAN等のIIDXコントローラー（HID準拠）をサポートするため、汎用的なゲームパッドライブラリ (`gilrs` 等) を採用する。最大32ボタンまでのビットマスクをサポート。
         *   **XInput**: 従来のXInput方式も設定により選択可能として残す。
     *   **ホットプラグ対応**: コントローラーの切断・再接続を動的に検知し、切断中は低負荷待機モードへ移行する。
     *   **ターゲット選択**: 複数のコントローラー接続時に、監視対象（ID指定）を選択可能にする。
 * **キーマッピング (Key Config)**:
     * コントローラーごとのボタン配置（物理ボタンIDと論理機能の対応）をユーザーが設定できる機能を持つ。
     * デフォルトプリセット（公式コン、PhoenixWAN等）を用意する。
-    * Rev.2では割り当て対象を `XInputGamepad.wButtons`（デジタルボタンのビットマスク）に限定する。
-        * Turntableは暫定的に「ボタン（ビットマスク）」として扱い、アナログ軸割り当ては将来拡張とする。
+    * 割り当て対象はデジタルボタンのビットマスク（**u32**）とする。
 * **チャタリング検出**:
     * リリースから再プレスまでの時間を計測し、閾値（デフォルト15ms）未満をチャタリングとして記録。
     * **統計の取り扱い**: チャタリングとして検出した再プレスは、寿命管理の「意図した押下回数」とは分けるため **`total_presses` には含めない**。
@@ -35,6 +37,7 @@ Rev.2では、接続安定性、汎用的なキーマッピング、データの
     * 「閉じる」でタスクトレイ格納。トレイアイコンから復帰・終了操作。
 * **入力テスター機能 (New)**:
     * ゲームプロセスの起動有無に関わらず、コントローラーの入力状態をリアルタイムに可視化する機能。
+    * **ピアノ鍵盤状の表示**: 1-7鍵を実際のIIDXコントローラーのように互い違いに配置（ピアノレイアウト）し、直感的な確認を可能にする。
     * ボタンごとのON/OFF状態をランプ等で表示。
     * チャタリング発生時に視覚的なフィードバック（警告色など）を行う。
 
@@ -48,6 +51,7 @@ Rev.2では、接続安定性、汎用的なキーマッピング、データの
 ## 3. アーキテクチャ設計
 
 ### 3.1 技術スタック (変更・追加分のみ)
+※ 本節の表は Rev.2（eframe採用時点）の技術選定。Tauri移行後の差分は「9. Tauri移行差分（Rev. 3 追補）」を参照。
 | カテゴリ | 選定技術 | 理由 |
 | :--- | :--- | :--- |
 | **言語** | Rust | 高速性、メモリ安全性、Win32 APIアクセスの容易さ |
@@ -143,8 +147,7 @@ graph TD
     * あるいは JSON側を配列形式（`[{"logical":"Key1","physical":4096}, ...]`）にして、キーを文字列にしない。
     * 本設計のJSON例では `mapping.bindings` と `switches` の両方がこの影響を受ける（どちらも `LogicalKey` をキーにするため）。
 
-* XInputのボタンは `wButtons`（16bitビットマスク）で表現されるため、物理ボタンIDは基本的に `u16` を前提にする。
-    * ただしトリガーやスティックはアナログ値であり、ビットマスクとは別系統の扱いになる（Turntableをアナログ軸で取りたい場合は別マッピング種別が必要）。
+* XInputのボタンは `wButtons`（16bitビットマスク）で表現されるが、DirectInput等の多ボタンコントローラーをサポートするため、物理ボタンIDは内部的に **u32** で扱う。
 
 * `schema_version` は永続化フォーマットのバージョンである。
     * フィールド追加・名称変更等の破壊的変更が入る場合は、この値を上げて読み込み時にマイグレーションする。
@@ -290,16 +293,16 @@ struct UserProfile {
     *   寿命超過時もバー表示は0%で停止し、数値のみで超過状況を確認可能。
 *   **スイッチ管理機能**:
     *   **モデル選択**: 各スイッチに対し、装着されているマイクロスイッチのモデル（Omron 50g等）をプルダウンで選択可能。選択に応じて定格寿命が再計算される。
-    *   **統計リセット**: 「Reset Stats」ボタンにより、スイッチ交換時に統計を0へリセット可能。
+    *   **統計リセット**: 「Reset」ボタンにより、スイッチ交換時に統計を0へリセット可能。
     *   **一括変更 (Bulk Actions)**: 
         *   各行のチェックボックスで対象キーを選択。
-        *   ヘッダー部の「Apply to Selected」で、選択したキーのモデルを一括変更（同時に統計リセット）可能。
+        *   上部の「Bulk Actions」エリアで、選択したキーのモデルを一括変更、または統計を一括リセット可能。
 
 ### 6.4 入力テスター画面 (Input Tester)
 * **目的**: ゲームを起動せずにスイッチの反応やチャタリングを確認するための診断モード。
 * **表示内容**:
-    * 定義された各 `LogicalKey` に対応するインジケータ（未押下: グレー/消灯, 押下中: 点灯）。
-    * チャタリング検出時のフラッシュ表示（短時間 赤色表示など）。
+    * **ピアノレイアウト**: 鍵盤1〜7を交互に配置。上段（E1-E4）、中段（黒鍵 2,4,6）、下段（白鍵 1,3,5,7）の3段で構成。
+    * 定義された各 `LogicalKey` に対応するインジケータ（未押下: 鍵盤色, 押下中: 赤色/点灯）。
     * 生のボタンID（ビットマスク）の表示（デバッグ用）。
 
 ## 7. 実装ロードマップ (Rev. 3 Status)
@@ -322,3 +325,115 @@ struct UserProfile {
 * スイッチ交換（統計リセット）も、後追い可能な監査情報としてログに残す（日時、対象キー、旧/新 `switch_model_id`、交換前の累計値）。
 * ログ出力先はユーザーデータ保存先と同一ディレクトリ（例: `app.log`）を基本とする。
 * GUI上には直近の重要イベント（保存成功/失敗、接続状態変化、ゲーム開始/終了、交換/リセット）だけを要約表示し、詳細はログで追えるようにする。
+
+## 9. Tauri移行差分（Rev. 3 追補）
+
+### 9.1 技術スタック（UI層の更新）
+
+* **GUI/常駐**: Tauri v2
+    * ウィンドウの非表示（トレイ格納）中も Rust（Core Process）は動作継続する
+* **Tray**: Tauri v2 のトレイAPI（Tray Icon）
+    * 「閉じる（×）」はアプリ終了ではなくトレイ格納に置き換える
+* **Frontend**: React + TypeScript + Vite
+    * 画面: Dashboard / Settings / Input Tester / Report
+* **IPC**: Tauri Commands（Invoke） + Events（Emit）
+
+### 9.2 常駐（トレイ格納）動作仕様
+
+* **Close（× / Alt+F4）**:
+    * `CloseRequested` 相当を捕捉して close を抑止し、`hide` に置き換える
+* **復帰**:
+    * トレイアイコンの **ダブルクリック** で `show` + `set_focus`。
+    * シングルクリックでの誤作動を防ぎ、一般的なWindowsアプリの挙動に合わせる。
+* **終了**:
+    * トレイ右クリックメニューの Quit からのみ安全に終了する（監視スレッド停止→保存→終了）
+
+### 9.3 監視スレッドと状態共有（Tauri向け）
+
+eframe時代と同様に監視は高頻度（接続中 1ms）を維持するが、UI更新頻度は 30〜60Hz 程度に抑える。
+
+* **監視スレッド責務**: 入力取得・エッジ検出・統計更新・プロセス監視
+* **共有状態**: GUI向けの「スナップショット（読み取り専用ビュー）」のみを共有
+* **イベント**: 状態変化（接続変化、ゲーム開始/終了、保存結果など）はイベントとしてUIへ通知
+
+推奨構成（どちらか1つに統一）:
+
+* `RwLock<Snapshot>` + イベントチャンネル
+* 参照差し替え（例: `ArcSwap<Snapshot>`） + イベントチャンネル
+
+注意:
+
+* 監視スレッドが1msごとに `emit` しない（イベントループ/IPC詰まり回避）
+* `emit` は別の低頻度ループで最新スナップショットを送る（例: 30〜60Hz）
+
+### 9.4 IPC設計（Commands / Events）
+
+#### 9.4.1 命名規約（表記ゆれ防止）
+
+* **Command名**: `snake_case`（Rust関数名と一致させる）
+* **Event名**: `kebab-case`（フロント側購読の文字列として扱いやすい）
+* **引数/ペイロードのキー**: `snake_case`（Rustの `serde` デフォルトに寄せる）
+* **LogicalKeyの表現**:
+    * JSON上は必ず文字列（例: `"Key1"`, `"E1"`, `"Other-12"`）
+    * `Other(u16)` を含むため、`Display`/`FromStr` による文字列化ルールをRust側で一元化する
+
+#### 9.4.2 ペイロード（最低限の型）
+
+Eventsは「イベント名 + JSONペイロード」で送る。`state-update` は描画用の定期送信、その他は状態変化通知を想定。
+
+* `state-update`（30〜60Hz）
+    * ペイロード例: `{"sequence": 123, "snapshot": { ... }}`
+    * `snapshot` の中身（推奨項目）は「3.3 スレッド間共有と同期方針（実装指針）」の `Snapshot` 推奨構成に準拠する
+
+`snapshot` の **MVP最小セット（必須）**:
+
+* `target_controller_index: u32`
+* `connected: bool`
+* `game_running: bool`
+* `config_summary: { chatter_threshold_ms: u32, polling_rate_ms_connected: u32, polling_rate_ms_disconnected: u32 }`
+* `mapping_summary: { profile_name: string, bindings: { [logical_key: string]: u32 } }`
+* `stats: { [logical_key: string]: { total_presses: u64, total_releases: u64, total_chatters: u64, total_chatter_releases: u64, last_session_presses: u64 } }`
+* `raw_button_state: u32`
+
+`snapshot` の **推奨拡張（任意）**:
+
+* `input_tester: { [logical_key: string]: { pressed: bool, last_chatter_at_ms?: u64, physical_raw?: u16 } }`
+* `last_input_at_ms: u64`（監視が動いている可視化用）
+* `save_status: { last_save_at_ms?: u64, last_save_result?: { ok: bool, message?: string } }`
+* `recent_events: [{ at_ms: u64, kind: string, message?: string }]`（簡易ログ用。最大件数は固定）
+
+補足:
+
+* `bindings` のキー（`logical_key`）は 9.4.1 の表記ルールに従い、`Other-12` 等も含められる。
+* UI側で導出できる値（寿命残量%、チャタリング率など）は「UI計算」か「Snapshot同梱」のどちらかに統一し、二重計算しない。
+* `connection-changed`（接続/切断の遷移時）
+    * ペイロード例: `{"connected": true, "target_controller_index": 0}`
+* `game-started` / `game-exited`（プロセス監視）
+    * ペイロード例: `{"process_name": "bm2dx.exe"}`
+    * `game-exited` はUIのレポート表示トリガ。必要なら「セッション統計の要約」を同梱する
+* `save-succeeded` / `save-failed`（Atomic Save）
+    * ペイロード例:
+        * 成功: `{"saved_at_ms": 1735526400000}`
+        * 失敗: `{"error": "..."}`
+
+Commands（例）:
+
+* `get_snapshot`
+* `set_target_controller(index)`
+* `start_learning(logical_key)` / `cancel_learning`
+* `set_binding(logical_key, physical)`（重複は旧キーをUnboundへ）
+* `reset_to_default_mapping`
+* `set_switch_model(logical_key, model_id)`
+* `reset_stats(logical_key)` / `bulk_apply(model_id, keys[])`
+
+Events（例）:
+
+* `state-update`（UI描画用スナップショット）
+* `connection-changed`
+* `game-started` / `game-exited`（Report表示トリガ）
+* `save-succeeded` / `save-failed`
+
+### 9.5 保存先（Tauri移行後）とデータ移行
+
+* 保存先はOSごとのアプリデータ領域を利用する（Windowsは `%LOCALAPPDATA%/SwitchLifeManager/` を基本）
+* 初回起動時に旧版ファイルが存在すればインポート/コピーを実施し、`schema_version` を確認して必要ならマイグレーションする

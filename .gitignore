@@ -22,5 +22,24 @@ target
 
 
 # Added by cargo
-
 /target
+
+# Node.js
+node_modules/
+dist/
+dist-native/
+*.log
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,8 +1,0 @@
-17:43:45 [INFO] SwitchLifeManager Started
-17:43:46 [INFO] Using config path: "C:\\Users\\kkana\\AppData\\Roaming\\SwitchLifeManager\\data\\profile.json"
-17:43:46 [INFO] Monitor thread started.
-17:43:46 [INFO] Monitor Service started
-17:44:12 [INFO] Shutdown command received during wait
-17:44:12 [INFO] Monitor loop exiting. Saving profile...
-17:44:12 [INFO] GUI exited. Waiting for monitor thread...
-17:44:12 [INFO] Application exited gracefully.
