@@ -3,6 +3,7 @@ use serde_with::serde_as;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LogicalKey {
@@ -158,6 +159,18 @@ impl ButtonStats {
 pub struct SwitchData {
     pub switch_model_id: String,
     pub stats: ButtonStats,
+    #[serde(default)]
+    pub last_replaced_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SwitchHistoryEntry {
+    pub date: DateTime<Utc>,
+    pub key: LogicalKey,
+    pub old_model_id: String,
+    pub new_model_id: String,
+    pub previous_stats: ButtonStats,
+    pub event_type: String, // "Replace", "Reset", "ManualEdit"
 }
 
 #[serde_as]
@@ -168,6 +181,8 @@ pub struct UserProfile {
     pub mapping: ButtonMap,
     #[serde_as(as = "HashMap<serde_with::DisplayFromStr, _>")]
     pub switches: HashMap<LogicalKey, SwitchData>,
+    #[serde(default)]
+    pub switch_history: Vec<SwitchHistoryEntry>,
 }
 
 impl Default for UserProfile {
@@ -177,6 +192,7 @@ impl Default for UserProfile {
             config: AppConfig::default(),
             mapping: ButtonMap::default(),
             switches: HashMap::new(),
+            switch_history: Vec::new(),
         }
     }
 }
@@ -269,6 +285,7 @@ mod tests {
         profile.switches.insert(LogicalKey::Key1, SwitchData {
             switch_model_id: "omron".to_string(),
             stats,
+            last_replaced_at: None,
         });
 
         let json = serde_json::to_string_pretty(&profile).unwrap();

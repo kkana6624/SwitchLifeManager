@@ -2,6 +2,7 @@ use tauri::State;
 use crate::app_state::AppState;
 use crate::usecase::monitor::{MonitorCommand, MonitorSharedState};
 use crate::domain::models::{LogicalKey, AppConfig, ButtonMap};
+use chrono::{DateTime, Utc};
 
 #[tauri::command]
 pub fn get_snapshot(state: State<'_, AppState>) -> MonitorSharedState {
@@ -46,4 +47,9 @@ pub fn reset_stats(state: State<'_, AppState>, key: LogicalKey) {
 #[tauri::command]
 pub fn replace_switch(state: State<'_, AppState>, key: LogicalKey, new_model_id: String) {
     let _ = state.command_tx.send(MonitorCommand::ReplaceSwitch { key, new_model_id });
+}
+
+#[tauri::command]
+pub fn set_last_replaced_date(state: State<'_, AppState>, key: LogicalKey, date: DateTime<Utc>) {
+    let _ = state.command_tx.send(MonitorCommand::SetLastReplacedDate { key, date });
 }

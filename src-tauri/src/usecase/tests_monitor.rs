@@ -95,6 +95,7 @@ pub mod tests {
         profile.switches.insert(key.clone(), crate::domain::models::SwitchData {
             switch_model_id: "old_model".to_string(),
             stats: stats.clone(),
+            last_replaced_at: None,
         });
 
         let repo = MockRepository { profile: profile.clone() };
@@ -178,6 +179,7 @@ pub mod tests {
         profile.switches.insert(key.clone(), crate::domain::models::SwitchData {
             switch_model_id: "test".to_string(),
             stats: stats,
+            last_replaced_at: None,
         });
         // Set update frequency very high for test
         profile.config.polling_rate_ms_connected = 1;

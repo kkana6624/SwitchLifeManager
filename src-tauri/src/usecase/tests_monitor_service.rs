@@ -78,6 +78,7 @@ mod tests {
     fn test_reset_stats_and_replace_switch() {
         use crate::domain::models::{LogicalKey, SwitchData, ButtonStats};
         use std::collections::HashMap;
+        use chrono::{DateTime, Utc};
 
         let (_tx, rx) = bounded(10);
         let shared_state = Arc::new(ArcSwap::from_pointee(MonitorSharedState::default()));
@@ -92,6 +93,7 @@ mod tests {
                 total_chatters: 10,
                 ..Default::default()
             },
+            last_replaced_at: None,
         });
 
         let repo = MockRepository { profile };
@@ -106,7 +108,13 @@ mod tests {
         let switch = service.profile.switches.get(&key).unwrap();
         assert_eq!(switch.stats.total_presses, 0);
         assert_eq!(switch.stats.total_chatters, 0);
-        assert_eq!(switch.switch_model_id, "old_model"); // Model should be unchanged
+        assert_eq!(switch.switch_model_id, "old_model");
+        assert!(switch.last_replaced_at.is_some());
+        
+        // History check
+        assert_eq!(service.profile.switch_history.len(), 1);
+        assert_eq!(service.profile.switch_history[0].event_type, "Reset");
+        assert_eq!(service.profile.switch_history[0].previous_stats.total_presses, 100);
 
         // Simulate usage again
         service.profile.switches.get_mut(&key).unwrap().stats.total_presses = 50;
@@ -118,8 +126,26 @@ mod tests {
         });
 
         let switch = service.profile.switches.get(&key).unwrap();
-        assert_eq!(switch.stats.total_presses, 0); // Should be reset
-        assert_eq!(switch.switch_model_id, "new_model"); // Model should be changed
+        assert_eq!(switch.stats.total_presses, 0);
+        assert_eq!(switch.switch_model_id, "new_model");
+        
+        // History check
+        assert_eq!(service.profile.switch_history.len(), 2);
+        assert_eq!(service.profile.switch_history[1].event_type, "Replace");
+        assert_eq!(service.profile.switch_history[1].previous_stats.total_presses, 50);
+
+        // 3. Test SetLastReplacedDate
+        let now = Utc::now();
+        service.handle_command(MonitorCommand::SetLastReplacedDate {
+            key: key.clone(),
+            date: now,
+        });
+        let switch = service.profile.switches.get(&key).unwrap();
+        assert_eq!(switch.last_replaced_at, Some(now));
+        
+        // History check
+        assert_eq!(service.profile.switch_history.len(), 3);
+        assert_eq!(service.profile.switch_history[2].event_type, "ManualEdit");
     }
 
     #[test]
