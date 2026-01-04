@@ -13,6 +13,7 @@ SwitchLifeManagerは、リズムゲーム（beatmania IIDX等）用コントロ�
 *   **メンテナンス支援**:
     *   **一括操作**: チェックボックスでキーを複数選択し、モデル変更や統計リセットを一括で行えます。
     *   **個別リセット**: スイッチ交換時に特定のキーの統計のみをリセットできます。
+    *   **履歴管理 (History)**: スイッチの交換やリセットの履歴を記録し、いつでも閲覧可能です。
 *   **タスクトレイ常駐**: ウィンドウを閉じるとタスクトレイに格納され、バックグラウンドで監視を継続します。**ダブルクリック**でウィンドウを復帰します。
 *   **マルチ入力方式対応**: DirectInput (HID / 最大32ボタン) および XInput の両方のコントローラーに対応しています。
 
@@ -98,6 +99,7 @@ SwitchLifeManager is a specialized utility tool designed for rhythm game control
 *   **Maintenance Support**:
     *   **Bulk Actions**: Apply switch models or reset statistics for multiple keys at once using checkboxes.
     *   **Individual Reset**: Reset counters for specific keys after replacement.
+    *   **History**: View logs of switch replacements and statistic resets.
 *   **System Tray Resident**: Minimizes to the system tray to run quietly in the background. **Double-click** the tray icon to restore the window.
 *   **Universal Input Support**: Supports both DirectInput (HID) (up to 32 buttons) and XInput controllers.
 
