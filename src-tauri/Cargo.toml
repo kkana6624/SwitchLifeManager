@@ -19,6 +19,7 @@ tauri-plugin-opener = "2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.148"
 anyhow = "1.0.100"
+chrono = { version = "0.4", features = ["serde"] }
 arc-swap = "1.7.1"
 crossbeam-channel = "0.5.15"
 ctrlc = "3.5.1"

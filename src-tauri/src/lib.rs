@@ -41,7 +41,8 @@ pub fn run() {
             commands::replace_switch,
             commands::update_config,
             commands::set_target_controller,
-            commands::reset_to_default_mapping
+            commands::reset_to_default_mapping,
+            commands::set_last_replaced_date
         ])
         .setup(|app| {
             // --- Logger Setup ---

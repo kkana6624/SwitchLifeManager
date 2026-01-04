@@ -1,4 +1,4 @@
-import { Container, Grid, Card, Text, Progress, Group, Select, Button, Stack, Title, Badge, Checkbox, Paper } from '@mantine/core';
+import { Container, Grid, Card, Text, Progress, Group, Select, Button, Stack, Title, Badge, Checkbox, Paper, Modal, TextInput } from '@mantine/core';
 import { MonitorSharedState, SwitchData } from '../../types';
 import { SWITCH_MODELS, ORDERED_KEYS } from '../../constants';
 import { invoke } from '@tauri-apps/api/core';
@@ -11,6 +11,11 @@ interface DashboardProps {
 export function Dashboard({ state }: DashboardProps) {
     const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
     const [bulkModelId, setBulkModelId] = useState<string | null>(null);
+
+    // Date Edit State
+    const [dateModalOpen, setDateModalOpen] = useState(false);
+    const [editingKey, setEditingKey] = useState<string | null>(null);
+    const [editingDate, setEditingDate] = useState<string>('');
 
     const getSwitchModel = (id: string) => {
         return SWITCH_MODELS.find(m => m.id === id) || SWITCH_MODELS.find(m => m.id === "generic_unknown")!;
@@ -70,6 +75,38 @@ export function Dashboard({ state }: DashboardProps) {
         }
     };
 
+    const handleOpenDateEdit = (key: string, currentDate: string | null) => {
+        setEditingKey(key);
+        if (currentDate) {
+            // Convert to YYYY-MM-DDTHH:mm local time approximation or use UTC?
+            // Input type datetime-local expects local time.
+            // new Date(isoString) converts to local time object.
+            // We need to format it.
+            const date = new Date(currentDate);
+            // Simple hack for YYYY-MM-DDTHH:mm
+            // (Note: manual offset adjustment might be needed if exact precision matters, 
+            // but for simple UI this often suffices or use a library)
+            // Let's use simplified string manipulation for ISO-like local format
+            const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+            const localISOTime = (new Date(date.getTime() - offsetMs)).toISOString().slice(0, 16);
+            setEditingDate(localISOTime);
+        } else {
+            const now = new Date();
+            const offsetMs = now.getTimezoneOffset() * 60 * 1000;
+            const localISOTime = (new Date(now.getTime() - offsetMs)).toISOString().slice(0, 16);
+            setEditingDate(localISOTime);
+        }
+        setDateModalOpen(true);
+    };
+
+    const handleSaveDate = () => {
+        if (editingKey && editingDate) {
+            const dateObj = new Date(editingDate);
+            invoke('set_last_replaced_date', { key: editingKey, date: dateObj.toISOString() });
+            setDateModalOpen(false);
+        }
+    };
+
     return (
         <Container fluid>
             <Group justify="space-between" mb="md">
@@ -113,6 +150,13 @@ export function Dashboard({ state }: DashboardProps) {
                     const color = getProgressColor(percentage);
                     const isSelected = selectedKeys.includes(key);
 
+                    // Calculations
+                    const totalEvents = switchData.stats.total_presses + switchData.stats.total_chatters;
+                    const chatterRate = totalEvents > 0 
+                        ? (switchData.stats.total_chatters / totalEvents) * 100 
+                        : 0;
+                    const isHighChatter = chatterRate > 0.5; // Warning threshold > 0.5%
+
                     return (
                         <Grid.Col key={key} span={{ base: 12, md: 6, lg: 4 }}>
                             <Card 
@@ -130,9 +174,14 @@ export function Dashboard({ state }: DashboardProps) {
                                         />
                                         <Text fw={700}>{key}</Text>
                                     </Group>
-                                    <Badge color={color} variant="light">
-                                        {percentage.toFixed(1)}% Life
-                                    </Badge>
+                                    <Group gap="xs">
+                                        {isHighChatter && (
+                                            <Badge color="red" variant="filled">Warning: Chatter</Badge>
+                                        )}
+                                        <Badge color={color} variant="light">
+                                            {percentage.toFixed(1)}% Life
+                                        </Badge>
+                                    </Group>
                                 </Group>
 
                                 <Text size="sm" c="dimmed" mb="xs">
@@ -150,13 +199,27 @@ export function Dashboard({ state }: DashboardProps) {
                                 <Group grow mb="md">
                                     <Stack gap={0}>
                                         <Text size="xs" c="dimmed">Presses</Text>
-                                        <Text fw={500}>{switchData.stats.total_presses.toLocaleString()} / {model.rated_lifespan_presses.toLocaleString()}</Text>
+                                        <Text fw={500}>{switchData.stats.total_presses.toLocaleString()}</Text>
                                     </Stack>
                                     <Stack gap={0}>
                                         <Text size="xs" c="dimmed">Chatters</Text>
-                                        <Text fw={500}>{switchData.stats.total_chatters.toLocaleString()}</Text>
+                                        <Text fw={500} c={isHighChatter ? 'red' : undefined}>
+                                            {switchData.stats.total_chatters.toLocaleString()} ({chatterRate.toFixed(2)}%)
+                                        </Text>
                                     </Stack>
                                 </Group>
+
+                                <Stack gap={0} mb="md">
+                                    <Text size="xs" c="dimmed">Last Replaced</Text>
+                                    <Group justify="space-between">
+                                        <Text size="sm">
+                                            {switchData.last_replaced_at ? new Date(switchData.last_replaced_at).toLocaleDateString() : 'Never'}
+                                        </Text>
+                                        <Button variant="subtle" size="compact-xs" onClick={() => handleOpenDateEdit(key, switchData.last_replaced_at)}>
+                                            Edit
+                                        </Button>
+                                    </Group>
+                                </Stack>
 
                                 <Group>
                                     <Select 
@@ -175,6 +238,21 @@ export function Dashboard({ state }: DashboardProps) {
                     );
                 })}
             </Grid>
+
+            <Modal opened={dateModalOpen} onClose={() => setDateModalOpen(false)} title={`Set Last Replaced Date: ${editingKey}`}>
+                <Stack>
+                    <TextInput
+                        type="datetime-local"
+                        label="Replacement Date"
+                        value={editingDate}
+                        onChange={(e) => setEditingDate(e.currentTarget.value)}
+                    />
+                    <Group justify="flex-end">
+                        <Button variant="default" onClick={() => setDateModalOpen(false)}>Cancel</Button>
+                        <Button onClick={handleSaveDate}>Save</Button>
+                    </Group>
+                </Stack>
+            </Modal>
         </Container>
     );
 }
