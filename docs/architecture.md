@@ -213,6 +213,7 @@ struct UserProfile {
     config: AppConfig,
     mapping: ButtonMap,
     switches: HashMap<LogicalKey, SwitchData>,
+    switch_history: Vec<SwitchHistoryEntry>,
 }
 ```
 
@@ -297,6 +298,12 @@ struct UserProfile {
     *   **一括変更 (Bulk Actions)**: 
         *   各行のチェックボックスで対象キーを選択。
         *   上部の「Bulk Actions」エリアで、選択したキーのモデルを一括変更、または統計を一括リセット可能。
+
+### 6.3 履歴画面 (History Tab) (New)
+*   **目的**: スイッチの交換や統計リセットの履歴を閲覧する。
+*   **表示内容**:
+    *   日時、対象キー、イベント種別（Replace/Reset/ManualEdit）、旧モデル/新モデル、リセット直前の統計値。
+    *   JSONデータ内の `switch_history` 配列をソースとする。
 
 ### 6.4 入力テスター画面 (Input Tester)
 * **目的**: ゲームを起動せずにスイッチの反応やチャタリングを確認するための診断モード。

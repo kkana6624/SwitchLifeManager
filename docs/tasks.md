@@ -59,6 +59,9 @@
     - [x] Chatter visualization. (Visualized as separate stats in Dashboard/Report, real-time feedback in tester shows presses)
 - [x] Implement Report View
     - [x] Auto-show on `game-exited`. (Implemented logic in backend to reset/track session, UI shows report tab. Auto-switching tab requires event listening in App.tsx)
+- [x] Implement History View
+    - [x] Persist history in JSON.
+    - [x] UI for viewing history logs.
 - [x] IPC Integration
     - [x] Create API wrapper for Tauri commands. (Direct invoke usage)
     - [x] Listen for Tauri events. (useTauriStore hook)
