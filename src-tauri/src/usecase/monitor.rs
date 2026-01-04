@@ -6,8 +6,9 @@ use anyhow::Result;
 use log::{error, info};
 use arc_swap::ArcSwap;
 use serde::Serialize;
+use chrono::{DateTime, Utc};
 
-use crate::domain::models::{AppConfig, ButtonStats, LogicalKey, UserProfile};
+use crate::domain::models::{AppConfig, ButtonStats, LogicalKey, UserProfile, SwitchHistoryEntry};
 use crate::domain::interfaces::InputSource;
 use crate::domain::errors::InputError;
 use crate::infrastructure::persistence::ConfigRepository;
@@ -20,7 +21,7 @@ use crate::usecase::input_monitor::ChatterDetector;
 pub struct LastSaveResult {
     pub success: bool,
     pub message: String,
-    pub timestamp: SystemTime,
+    pub timestamp: DateTime<Utc>,
 }
 
 /// Snapshot of the monitor state for UI consumption.
@@ -34,6 +35,7 @@ pub struct MonitorSharedState {
     // Use Arc to avoid cloning the map every update
     pub bindings: Arc<HashMap<LogicalKey, u32>>,
     pub switches: HashMap<LogicalKey, crate::domain::models::SwitchData>,
+    pub switch_history: Arc<Vec<SwitchHistoryEntry>>,
     
     // Real-time Input State for Tester
     pub current_pressed_keys: HashSet<LogicalKey>,
@@ -49,6 +51,7 @@ pub enum MonitorCommand {
     SetKeyBinding { key: LogicalKey, button: u32 }, // Added for single key update with conflict resolution
     ReplaceSwitch { key: LogicalKey, new_model_id: String },
     ResetStats { key: LogicalKey },
+    SetLastReplacedDate { key: LogicalKey, date: DateTime<Utc> },
     Shutdown,
     ForceSave,
 }
@@ -71,6 +74,7 @@ pub struct MonitorService<I, P, R> {
 
     // Cached Arc for bindings to avoid recreating it when not changed
     cached_bindings: Arc<HashMap<LogicalKey, u32>>,
+    cached_history: Arc<Vec<SwitchHistoryEntry>>,
 }
 
 impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P, R> {
@@ -91,6 +95,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
 
         let chatter_detector = ChatterDetector::new(profile.config.chatter_threshold_ms);
         let cached_bindings = Arc::new(profile.mapping.bindings.clone());
+        let cached_history = Arc::new(profile.switch_history.clone());
 
         Ok(Self {
             input_source,
@@ -102,6 +107,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             shared_state,
             high_res_timer: None,
             cached_bindings,
+            cached_history,
         })
     }
 
@@ -175,13 +181,26 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                      info!("AUDIT: ReplaceSwitch for Key: {}. Old Model: {}, Presses: {}, Chatters: {}",
                          key, switch.switch_model_id, switch.stats.total_presses, switch.stats.total_chatters);
 
+                     // History
+                     self.profile.switch_history.push(SwitchHistoryEntry {
+                         date: Utc::now(),
+                         key: key.clone(),
+                         old_model_id: switch.switch_model_id.clone(),
+                         new_model_id: new_model_id.clone(),
+                         previous_stats: switch.stats.clone(),
+                         event_type: "Replace".to_string(),
+                     });
+                     self.cached_history = Arc::new(self.profile.switch_history.clone());
+
                      switch.stats = ButtonStats::default();
                      switch.switch_model_id = new_model_id.clone();
+                     switch.last_replaced_at = Some(Utc::now());
                      info!("Replaced switch for {} with new model {}", key, new_model_id);
                  } else {
                      self.profile.switches.insert(key.clone(), crate::domain::models::SwitchData {
                          switch_model_id: new_model_id.clone(),
                          stats: ButtonStats::default(),
+                         last_replaced_at: Some(Utc::now()),
                      });
                      info!("Added new switch for {} with model {}", key, new_model_id);
                  }
@@ -192,9 +211,38 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                      info!("AUDIT: ResetStats for Key: {}. Model: {}, Previous Presses: {}, Previous Chatters: {}",
                          key, switch.switch_model_id, switch.stats.total_presses, switch.stats.total_chatters);
 
+                     // History
+                     self.profile.switch_history.push(SwitchHistoryEntry {
+                         date: Utc::now(),
+                         key: key.clone(),
+                         old_model_id: switch.switch_model_id.clone(),
+                         new_model_id: switch.switch_model_id.clone(),
+                         previous_stats: switch.stats.clone(),
+                         event_type: "Reset".to_string(),
+                     });
+                     self.cached_history = Arc::new(self.profile.switch_history.clone());
+
                      switch.stats = ButtonStats::default();
+                     switch.last_replaced_at = Some(Utc::now());
                      info!("Reset stats for {}", key);
                 }
+            }
+            MonitorCommand::SetLastReplacedDate { key, date } => {
+                 if let Some(switch) = self.profile.switches.get_mut(&key) {
+                     switch.last_replaced_at = Some(date);
+                     
+                     self.profile.switch_history.push(SwitchHistoryEntry {
+                         date: Utc::now(),
+                         key: key.clone(),
+                         old_model_id: switch.switch_model_id.clone(),
+                         new_model_id: switch.switch_model_id.clone(),
+                         previous_stats: switch.stats.clone(),
+                         event_type: "ManualEdit".to_string(),
+                     });
+                     self.cached_history = Arc::new(self.profile.switch_history.clone());
+                     
+                     info!("Set last replaced date for {} to {}", key, date);
+                 }
             }
         }
     }
@@ -307,6 +355,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                          crate::domain::models::SwitchData {
                              switch_model_id: "generic_unknown".to_string(),
                              stats: ButtonStats::default(),
+                             last_replaced_at: None,
                          }
                     });
 
@@ -402,6 +451,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             profile_name: self.profile.mapping.profile_name.clone(),
             bindings: self.cached_bindings.clone(), // Cheap Arc clone
             switches,
+            switch_history: self.cached_history.clone(),
             current_pressed_keys: pressed_keys.clone(),
             raw_button_state: raw_buttons,
             last_status_message: old_state.last_status_message.clone(), // Preserve
@@ -427,7 +477,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         new_state.last_save_result = Some(LastSaveResult {
             success,
             message,
-            timestamp: SystemTime::now(),
+            timestamp: Utc::now(),
         });
         self.shared_state.store(Arc::new(new_state));
     }

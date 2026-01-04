@@ -6,6 +6,7 @@ import { Dashboard } from './features/dashboard/Dashboard';
 import { Settings } from './features/settings/Settings';
 import { InputTester } from './features/tester/InputTester';
 import { Report } from './features/report/Report';
+import { History } from './features/history/History';
 
 function App() {
   const [opened, { toggle }] = useDisclosure();
@@ -49,6 +50,12 @@ function App() {
             variant="filled"
         />
         <NavLink 
+            label="History" 
+            active={activeTab === 'history'} 
+            onClick={() => setActiveTab('history')} 
+            variant="filled"
+        />
+        <NavLink 
             label="Settings" 
             active={activeTab === 'settings'} 
             onClick={() => setActiveTab('settings')} 
@@ -65,6 +72,7 @@ function App() {
       <AppShell.Main>
         {activeTab === 'dashboard' && <Dashboard state={state} />}
         {activeTab === 'tester' && <InputTester state={state} />}
+        {activeTab === 'history' && <History state={state} />}
         {activeTab === 'settings' && <Settings state={state} />}
         {activeTab === 'report' && <Report state={state} />}
       </AppShell.Main>
