@@ -41,12 +41,12 @@ export function Dashboard({ state }: DashboardProps) {
 
     const handleModelChange = (key: string, modelId: string) => {
         if (confirm(`Change model for ${key} to ${modelId}? Stats will be reset.`)) {
-             invoke('replace_switch', { key, newModelId: modelId });
+            invoke('replace_switch', { key, newModelId: modelId });
         }
     };
 
     const toggleSelection = (key: string) => {
-        setSelectedKeys(prev => 
+        setSelectedKeys(prev =>
             prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
         );
     };
@@ -120,7 +120,7 @@ export function Dashboard({ state }: DashboardProps) {
                 <Paper p="md" mb="lg" bg="blue.0" withBorder>
                     <Title order={5} mb="xs">Bulk Actions ({selectedKeys.length} selected)</Title>
                     <Group align="end">
-                        <Select 
+                        <Select
                             label="Change Model"
                             placeholder="Select Switch Model"
                             data={SWITCH_MODELS.map(m => ({ value: m.id, label: m.name }))}
@@ -138,13 +138,58 @@ export function Dashboard({ state }: DashboardProps) {
                 </Paper>
             )}
 
+            {/* Session Info Section */}
+            <Grid mb="lg">
+                <Grid.Col span={{ base: 12, md: 6 }}>
+                    <Paper shadow="xs" p="md" withBorder>
+                        <Group justify="space-between" mb="xs">
+                            <Title order={5}>Session Stats ({state.is_game_running ? "Live" : "Previous"})</Title>
+                            {state.is_game_running && <Badge color="green" variant="dot">Running</Badge>}
+                        </Group>
+                        <Group grow>
+                            <Stack gap={0}>
+                                <Text size="xs" c="dimmed">Session Presses</Text>
+                                <Text fw={700} size="lg">
+                                    {ORDERED_KEYS.reduce((acc, key) => acc + (state.switches[key]?.stats.last_session_presses || 0), 0).toLocaleString()}
+                                </Text>
+                            </Stack>
+                            <Stack gap={0}>
+                                <Text size="xs" c="dimmed">Session Chatters</Text>
+                                <Text fw={700} size="lg" c="red">
+                                    {ORDERED_KEYS.reduce((acc, key) => acc + (state.switches[key]?.stats.last_session_chatters || 0), 0).toLocaleString()}
+                                </Text>
+                            </Stack>
+                        </Group>
+                    </Paper>
+                </Grid.Col>
+
+                <Grid.Col span={{ base: 12, md: 6 }}>
+                    <Paper shadow="xs" p="md" withBorder>
+                        <Title order={5} mb="xs">Recent Sessions (Last 3)</Title>
+                        {state.recent_sessions && state.recent_sessions.length > 0 ? (
+                            <Stack gap="xs">
+                                {state.recent_sessions.slice().reverse().map((session, idx) => (
+                                    <Group key={idx} justify="space-between">
+                                        <Text size="sm">{new Date(session.start_time).toLocaleString()}</Text>
+                                        <Badge variant="outline">{session.duration_secs}s</Badge>
+                                    </Group>
+                                ))}
+                            </Stack>
+                        ) : (
+                            <Text size="sm" c="dimmed">No recent sessions recorded.</Text>
+                        )}
+                    </Paper>
+                </Grid.Col>
+            </Grid>
+
+            {/* Switch Grid */}
             <Grid>
                 {ORDERED_KEYS.map(key => {
                     const switchData = state.switches[key] || {
                         switch_model_id: "generic_unknown",
                         stats: { total_presses: 0, total_chatters: 0 }
                     } as SwitchData;
-                    
+
                     const model = getSwitchModel(switchData.switch_model_id);
                     const percentage = getLifeExpectancyPercentage(switchData.stats.total_presses, model.rated_lifespan_presses);
                     const color = getProgressColor(percentage);
@@ -152,23 +197,23 @@ export function Dashboard({ state }: DashboardProps) {
 
                     // Calculations
                     const totalEvents = switchData.stats.total_presses + switchData.stats.total_chatters;
-                    const chatterRate = totalEvents > 0 
-                        ? (switchData.stats.total_chatters / totalEvents) * 100 
+                    const chatterRate = totalEvents > 0
+                        ? (switchData.stats.total_chatters / totalEvents) * 100
                         : 0;
                     const isHighChatter = chatterRate > 0.5; // Warning threshold > 0.5%
 
                     return (
                         <Grid.Col key={key} span={{ base: 12, md: 6, lg: 4 }}>
-                            <Card 
-                                shadow="sm" 
-                                padding="lg" 
-                                radius="md" 
+                            <Card
+                                shadow="sm"
+                                padding="lg"
+                                radius="md"
                                 withBorder
                                 style={{ borderColor: isSelected ? 'var(--mantine-color-blue-5)' : undefined, borderWidth: isSelected ? 2 : 1 }}
                             >
                                 <Group justify="space-between" mb="xs">
                                     <Group>
-                                        <Checkbox 
+                                        <Checkbox
                                             checked={isSelected}
                                             onChange={() => toggleSelection(key)}
                                         />
@@ -188,11 +233,11 @@ export function Dashboard({ state }: DashboardProps) {
                                     Model: {model.name}
                                 </Text>
 
-                                <Progress 
-                                    value={percentage} 
-                                    color={color} 
-                                    size="xl" 
-                                    radius="xl" 
+                                <Progress
+                                    value={percentage}
+                                    color={color}
+                                    size="xl"
+                                    radius="xl"
                                     mb="md"
                                 />
 
@@ -205,6 +250,12 @@ export function Dashboard({ state }: DashboardProps) {
                                         <Text size="xs" c="dimmed">Chatters</Text>
                                         <Text fw={500} c={isHighChatter ? 'red' : undefined}>
                                             {switchData.stats.total_chatters.toLocaleString()} ({chatterRate.toFixed(2)}%)
+                                        </Text>
+                                    </Stack>
+                                    <Stack gap={0}>
+                                        <Text size="xs" c="dimmed">Session</Text>
+                                        <Text fw={500}>
+                                            {switchData.stats.last_session_presses.toLocaleString()}
                                         </Text>
                                     </Stack>
                                 </Group>
@@ -222,11 +273,11 @@ export function Dashboard({ state }: DashboardProps) {
                                 </Stack>
 
                                 <Group>
-                                    <Select 
+                                    <Select
                                         size="xs"
                                         data={SWITCH_MODELS.map(m => ({ value: m.id, label: m.name }))}
                                         value={switchData.switch_model_id}
-                                        onChange={(val) => val && handleModelChange(key, val)}
+                                        onChange={(val: string | null) => val && handleModelChange(key, val)}
                                         style={{ flexGrow: 1 }}
                                     />
                                     <Button size="xs" color="red" variant="light" onClick={() => handleResetStats(key)}>
@@ -237,7 +288,7 @@ export function Dashboard({ state }: DashboardProps) {
                         </Grid.Col>
                     );
                 })}
-            </Grid>
+            </Grid >
 
             <Modal opened={dateModalOpen} onClose={() => setDateModalOpen(false)} title={`Set Last Replaced Date: ${editingKey}`}>
                 <Stack>
@@ -245,7 +296,7 @@ export function Dashboard({ state }: DashboardProps) {
                         type="datetime-local"
                         label="Replacement Date"
                         value={editingDate}
-                        onChange={(e) => setEditingDate(e.currentTarget.value)}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditingDate(e.currentTarget.value)}
                     />
                     <Group justify="flex-end">
                         <Button variant="default" onClick={() => setDateModalOpen(false)}>Cancel</Button>
@@ -253,6 +304,6 @@ export function Dashboard({ state }: DashboardProps) {
                     </Group>
                 </Stack>
             </Modal>
-        </Container>
+        </Container >
     );
 }

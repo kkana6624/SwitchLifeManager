@@ -1,16 +1,16 @@
+use anyhow::Result;
+use arc_swap::ArcSwap;
+use chrono::{DateTime, Utc};
+use crossbeam_channel::Receiver;
+use log::{error, info};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use crossbeam_channel::Receiver;
-use anyhow::Result;
-use log::{error, info};
-use arc_swap::ArcSwap;
-use serde::Serialize;
-use chrono::{DateTime, Utc};
 
-use crate::domain::models::{AppConfig, ButtonStats, LogicalKey, UserProfile, SwitchHistoryEntry};
-use crate::domain::interfaces::InputSource;
 use crate::domain::errors::InputError;
+use crate::domain::interfaces::InputSource;
+use crate::domain::models::{AppConfig, ButtonStats, LogicalKey, SwitchHistoryEntry, UserProfile};
 use crate::infrastructure::persistence::ConfigRepository;
 use crate::infrastructure::process_monitor::ProcessMonitor;
 use crate::infrastructure::timer::HighResolutionTimer;
@@ -36,22 +36,35 @@ pub struct MonitorSharedState {
     pub bindings: Arc<HashMap<LogicalKey, u32>>,
     pub switches: HashMap<LogicalKey, crate::domain::models::SwitchData>,
     pub switch_history: Arc<Vec<SwitchHistoryEntry>>,
-    
+
     // Real-time Input State for Tester
     pub current_pressed_keys: HashSet<LogicalKey>,
     pub raw_button_state: u32,
 
     pub last_status_message: Option<String>,
     pub last_save_result: Option<LastSaveResult>,
+
+    pub recent_sessions: Vec<crate::domain::models::SessionRecord>,
 }
 
 pub enum MonitorCommand {
     UpdateConfig(AppConfig),
     UpdateMapping(String, HashMap<LogicalKey, u32>), // Preserved for bulk updates (presets)
-    SetKeyBinding { key: LogicalKey, button: u32 }, // Added for single key update with conflict resolution
-    ReplaceSwitch { key: LogicalKey, new_model_id: String },
-    ResetStats { key: LogicalKey },
-    SetLastReplacedDate { key: LogicalKey, date: DateTime<Utc> },
+    SetKeyBinding {
+        key: LogicalKey,
+        button: u32,
+    }, // Added for single key update with conflict resolution
+    ReplaceSwitch {
+        key: LogicalKey,
+        new_model_id: String,
+    },
+    ResetStats {
+        key: LogicalKey,
+    },
+    SetLastReplacedDate {
+        key: LogicalKey,
+        date: DateTime<Utc>,
+    },
     Shutdown,
     ForceSave,
 }
@@ -71,6 +84,9 @@ pub struct MonitorService<I, P, R> {
 
     // Timer Resolution Control
     high_res_timer: Option<HighResolutionTimer>,
+
+    // Track session start time
+    current_session_start: Option<DateTime<Utc>>,
 
     // Cached Arc for bindings to avoid recreating it when not changed
     cached_bindings: Arc<HashMap<LogicalKey, u32>>,
@@ -106,6 +122,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             command_rx,
             shared_state,
             high_res_timer: None,
+            current_session_start: None,
             cached_bindings,
             cached_history,
         })
@@ -137,7 +154,8 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 }
 
                 self.profile.config = cfg;
-                self.chatter_detector = ChatterDetector::new(self.profile.config.chatter_threshold_ms);
+                self.chatter_detector =
+                    ChatterDetector::new(self.profile.config.chatter_threshold_ms);
                 info!("Config updated");
             }
             MonitorCommand::UpdateMapping(name, bindings) => {
@@ -166,7 +184,10 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 if let Some(old_key) = conflict_key {
                     // Set to 0 (unbound) instead of removing the key entirely
                     self.profile.mapping.bindings.insert(old_key.clone(), 0);
-                    info!("Unbound duplicate binding for key: {} (was button {})", old_key, button);
+                    info!(
+                        "Unbound duplicate binding for key: {} (was button {})",
+                        old_key, button
+                    );
                 }
 
                 // Insert new assignment
@@ -176,73 +197,79 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                 info!("Set binding for key: {} -> button {}", key, button);
             }
             MonitorCommand::ReplaceSwitch { key, new_model_id } => {
-                 if let Some(switch) = self.profile.switches.get_mut(&key) {
-                     // Audit Log: Before
-                     info!("AUDIT: ReplaceSwitch for Key: {}. Old Model: {}, Presses: {}, Chatters: {}",
+                if let Some(switch) = self.profile.switches.get_mut(&key) {
+                    // Audit Log: Before
+                    info!("AUDIT: ReplaceSwitch for Key: {}. Old Model: {}, Presses: {}, Chatters: {}",
                          key, switch.switch_model_id, switch.stats.total_presses, switch.stats.total_chatters);
 
-                     // History
-                     self.profile.switch_history.push(SwitchHistoryEntry {
-                         date: Utc::now(),
-                         key: key.clone(),
-                         old_model_id: switch.switch_model_id.clone(),
-                         new_model_id: new_model_id.clone(),
-                         previous_stats: switch.stats.clone(),
-                         event_type: "Replace".to_string(),
-                     });
-                     self.cached_history = Arc::new(self.profile.switch_history.clone());
+                    // History
+                    self.profile.switch_history.push(SwitchHistoryEntry {
+                        date: Utc::now(),
+                        key: key.clone(),
+                        old_model_id: switch.switch_model_id.clone(),
+                        new_model_id: new_model_id.clone(),
+                        previous_stats: switch.stats.clone(),
+                        event_type: "Replace".to_string(),
+                    });
+                    self.cached_history = Arc::new(self.profile.switch_history.clone());
 
-                     switch.stats = ButtonStats::default();
-                     switch.switch_model_id = new_model_id.clone();
-                     switch.last_replaced_at = Some(Utc::now());
-                     info!("Replaced switch for {} with new model {}", key, new_model_id);
-                 } else {
-                     self.profile.switches.insert(key.clone(), crate::domain::models::SwitchData {
-                         switch_model_id: new_model_id.clone(),
-                         stats: ButtonStats::default(),
-                         last_replaced_at: Some(Utc::now()),
-                     });
-                     info!("Added new switch for {} with model {}", key, new_model_id);
-                 }
+                    switch.stats = ButtonStats::default();
+                    switch.switch_model_id = new_model_id.clone();
+                    switch.last_replaced_at = Some(Utc::now());
+                    info!(
+                        "Replaced switch for {} with new model {}",
+                        key, new_model_id
+                    );
+                } else {
+                    self.profile.switches.insert(
+                        key.clone(),
+                        crate::domain::models::SwitchData {
+                            switch_model_id: new_model_id.clone(),
+                            stats: ButtonStats::default(),
+                            last_replaced_at: Some(Utc::now()),
+                        },
+                    );
+                    info!("Added new switch for {} with model {}", key, new_model_id);
+                }
             }
             MonitorCommand::ResetStats { key } => {
                 if let Some(switch) = self.profile.switches.get_mut(&key) {
-                     // Audit Log: Before
-                     info!("AUDIT: ResetStats for Key: {}. Model: {}, Previous Presses: {}, Previous Chatters: {}",
+                    // Audit Log: Before
+                    info!("AUDIT: ResetStats for Key: {}. Model: {}, Previous Presses: {}, Previous Chatters: {}",
                          key, switch.switch_model_id, switch.stats.total_presses, switch.stats.total_chatters);
 
-                     // History
-                     self.profile.switch_history.push(SwitchHistoryEntry {
-                         date: Utc::now(),
-                         key: key.clone(),
-                         old_model_id: switch.switch_model_id.clone(),
-                         new_model_id: switch.switch_model_id.clone(),
-                         previous_stats: switch.stats.clone(),
-                         event_type: "Reset".to_string(),
-                     });
-                     self.cached_history = Arc::new(self.profile.switch_history.clone());
+                    // History
+                    self.profile.switch_history.push(SwitchHistoryEntry {
+                        date: Utc::now(),
+                        key: key.clone(),
+                        old_model_id: switch.switch_model_id.clone(),
+                        new_model_id: switch.switch_model_id.clone(),
+                        previous_stats: switch.stats.clone(),
+                        event_type: "Reset".to_string(),
+                    });
+                    self.cached_history = Arc::new(self.profile.switch_history.clone());
 
-                     switch.stats = ButtonStats::default();
-                     switch.last_replaced_at = Some(Utc::now());
-                     info!("Reset stats for {}", key);
+                    switch.stats = ButtonStats::default();
+                    switch.last_replaced_at = Some(Utc::now());
+                    info!("Reset stats for {}", key);
                 }
             }
             MonitorCommand::SetLastReplacedDate { key, date } => {
-                 if let Some(switch) = self.profile.switches.get_mut(&key) {
-                     switch.last_replaced_at = Some(date);
-                     
-                     self.profile.switch_history.push(SwitchHistoryEntry {
-                         date: Utc::now(),
-                         key: key.clone(),
-                         old_model_id: switch.switch_model_id.clone(),
-                         new_model_id: switch.switch_model_id.clone(),
-                         previous_stats: switch.stats.clone(),
-                         event_type: "ManualEdit".to_string(),
-                     });
-                     self.cached_history = Arc::new(self.profile.switch_history.clone());
-                     
-                     info!("Set last replaced date for {} to {}", key, date);
-                 }
+                if let Some(switch) = self.profile.switches.get_mut(&key) {
+                    switch.last_replaced_at = Some(date);
+
+                    self.profile.switch_history.push(SwitchHistoryEntry {
+                        date: Utc::now(),
+                        key: key.clone(),
+                        old_model_id: switch.switch_model_id.clone(),
+                        new_model_id: switch.switch_model_id.clone(),
+                        previous_stats: switch.stats.clone(),
+                        event_type: "ManualEdit".to_string(),
+                    });
+                    self.cached_history = Arc::new(self.profile.switch_history.clone());
+
+                    info!("Set last replaced date for {} to {}", key, date);
+                }
             }
         }
     }
@@ -270,8 +297,8 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             // 1. Process Commands
             while let Ok(cmd) = self.command_rx.try_recv() {
                 if let MonitorCommand::Shutdown = cmd {
-                     info!("Shutdown command received");
-                     break 'monitor_loop;
+                    info!("Shutdown command received");
+                    break 'monitor_loop;
                 }
                 self.handle_command(cmd);
                 force_publish = true;
@@ -316,15 +343,18 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
 
             // State Transition: Connected <-> Disconnected
             if is_connected != was_connected {
-                info!("Connection state changed: {} -> {}", was_connected, is_connected);
+                info!(
+                    "Connection state changed: {} -> {}",
+                    was_connected, is_connected
+                );
                 was_connected = is_connected;
                 force_publish = true;
 
                 if is_connected {
                     // Connected: Enable HighRes Timer
                     if self.high_res_timer.is_none() {
-                         self.high_res_timer = Some(HighResolutionTimer::new());
-                         info!("High resolution timer enabled");
+                        self.high_res_timer = Some(HighResolutionTimer::new());
+                        info!("High resolution timer enabled");
                     }
                 } else {
                     // Disconnected: Disable HighRes Timer
@@ -334,6 +364,15 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                     }
                 }
             }
+
+            // 6. Process Monitor (Check Game Status)
+            let is_game_running = if last_process_check.elapsed() >= process_check_interval {
+                let running = self.check_game_running();
+                last_process_check = Instant::now();
+                running
+            } else {
+                was_game_running
+            };
 
             // 5. Process Input
             current_pressed_keys.clear();
@@ -351,47 +390,68 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                         current_pressed_keys.insert(key.clone());
                     }
 
-                    let switch_data = self.profile.switches.entry(key.clone()).or_insert_with(|| {
-                         crate::domain::models::SwitchData {
-                             switch_model_id: "generic_unknown".to_string(),
-                             stats: ButtonStats::default(),
-                             last_replaced_at: None,
-                         }
-                    });
+                    let switch_data =
+                        self.profile.switches.entry(key.clone()).or_insert_with(|| {
+                            crate::domain::models::SwitchData {
+                                switch_model_id: "generic_unknown".to_string(),
+                                stats: ButtonStats::default(),
+                                last_replaced_at: None,
+                            }
+                        });
 
-                    self.chatter_detector.process_button(key, is_pressed, now_ms, &mut switch_data.stats);
+                    // Pass is_game_running (which effectively is the session active flag)
+                    self.chatter_detector.process_button(
+                        key,
+                        is_pressed,
+                        now_ms,
+                        &mut switch_data.stats,
+                        is_game_running,
+                    );
 
-                    // Note: session tracking logic is implicitly handled by `process_button` if we were just incrementing.
-                    // But `process_button` only updates total/session stats.
-                    // We need to manage session reset on game start.
+                    // Note: session tracking logic is implicitly handled by `process_button` now.
                 }
             }
 
-            // 6. Process Monitor (Check Game Status)
-            let is_game_running = if last_process_check.elapsed() >= process_check_interval {
-                let running = self.check_game_running();
-                last_process_check = Instant::now();
-                running
-            } else {
-                 was_game_running
-            };
-
             // Session Logic
             if is_game_running != was_game_running {
-                info!("Game running state changed: {} -> {}", was_game_running, is_game_running);
+                info!(
+                    "Game running state changed: {} -> {}",
+                    was_game_running, is_game_running
+                );
                 if is_game_running {
-                    // Game Started: Reset session stats
+                    // Game Started
                     info!("Game started. Resetting session stats.");
+                    self.current_session_start = Some(Utc::now());
                     for switch in self.profile.switches.values_mut() {
                         switch.stats.reset_session_stats();
                     }
                 } else {
-                    // Game Ended: Generate report
-                    info!("Game ended. Session Report:");
-                    // Ideally we should structure this report better or send event
+                    // Game Ended
+                    let end_time = Utc::now();
+                    info!("Game ended.");
+
+                    if let Some(start_time) = self.current_session_start.take() {
+                        let duration_secs = (end_time - start_time).num_seconds().max(0) as u64;
+
+                        let record = crate::domain::models::SessionRecord {
+                            start_time,
+                            end_time,
+                            duration_secs,
+                        };
+
+                        self.profile.recent_sessions.push(record);
+                        // Keep last 3 sessions
+                        if self.profile.recent_sessions.len() > 3 {
+                            self.profile.recent_sessions.remove(0); // Remove oldest
+                        }
+
+                        info!("Session recorded: {}s", duration_secs);
+                    }
+
+                    // Report logic... (simplified)
                     for (key, switch) in &self.profile.switches {
                         if switch.stats.last_session_presses > 0 {
-                             info!("  {}: {} presses", key, switch.stats.last_session_presses);
+                            info!("  {}: {} presses", key, switch.stats.last_session_presses);
                         }
                     }
                     // Notify UI if needed (omitted for CLI focus)
@@ -402,7 +462,12 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
 
             // 7. Publish State
             if force_publish || last_publish.elapsed() >= publish_interval {
-                self.publish_state(is_connected, is_game_running, &current_pressed_keys, current_raw_buttons);
+                self.publish_state(
+                    is_connected,
+                    is_game_running,
+                    &current_pressed_keys,
+                    current_raw_buttons,
+                );
                 last_publish = Instant::now();
             }
 
@@ -432,10 +497,17 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
     }
 
     fn check_game_running(&mut self) -> bool {
-        self.process_monitor.is_process_running(&self.profile.config.target_process_name)
+        self.process_monitor
+            .is_process_running(&self.profile.config.target_process_name)
     }
 
-    fn publish_state(&self, is_connected: bool, is_game_running: bool, pressed_keys: &HashSet<LogicalKey>, raw_buttons: u32) {
+    fn publish_state(
+        &self,
+        is_connected: bool,
+        is_game_running: bool,
+        pressed_keys: &HashSet<LogicalKey>,
+        raw_buttons: u32,
+    ) {
         // Construct new state
         let switches = self.profile.switches.clone();
 
@@ -456,6 +528,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             raw_button_state: raw_buttons,
             last_status_message: old_state.last_status_message.clone(), // Preserve
             last_save_result: old_state.last_save_result.clone(),       // Preserve
+            recent_sessions: self.profile.recent_sessions.clone(),
         };
 
         self.shared_state.store(Arc::new(new_state));

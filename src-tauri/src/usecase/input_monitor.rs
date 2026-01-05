@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::domain::models::{ButtonStats, LogicalKey};
+use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 struct ButtonMonitorState {
@@ -33,8 +33,19 @@ impl ChatterDetector {
     /// * `is_pressed_now` - The current physical state of the button
     /// * `now_ms` - Current timestamp in milliseconds
     /// * `stats` - The stats object to update
-    pub fn process_button(&mut self, key: &LogicalKey, is_pressed_now: bool, now_ms: u64, stats: &mut ButtonStats) {
-        let state = self.states.entry(key.clone()).or_insert_with(ButtonMonitorState::default);
+    /// * `is_session_active` - Whether the game session is currently active (game running)
+    pub fn process_button(
+        &mut self,
+        key: &LogicalKey,
+        is_pressed_now: bool,
+        now_ms: u64,
+        stats: &mut ButtonStats,
+        is_session_active: bool,
+    ) {
+        let state = self
+            .states
+            .entry(key.clone())
+            .or_insert_with(ButtonMonitorState::default);
 
         // Edge detection
         if is_pressed_now && !state.is_pressed {
@@ -58,11 +69,15 @@ impl ChatterDetector {
 
             if is_chatter {
                 stats.total_chatters += 1;
-                stats.last_session_chatters += 1;
+                if is_session_active {
+                    stats.last_session_chatters += 1;
+                }
 
                 if !state.has_counted_chatter_release {
                     stats.total_chatter_releases += 1;
-                    stats.last_session_chatter_releases += 1;
+                    if is_session_active {
+                        stats.last_session_chatter_releases += 1;
+                    }
                     state.has_counted_chatter_release = true;
                 }
 
@@ -72,11 +87,12 @@ impl ChatterDetector {
             } else {
                 // Normal Press
                 stats.total_presses += 1;
-                stats.last_session_presses += 1; // Assuming this is session counter
+                if is_session_active {
+                    stats.last_session_presses += 1;
+                }
             }
 
             state.is_pressed = true;
-
         } else if !is_pressed_now && state.is_pressed {
             // Falling Edge (Release)
             stats.total_releases += 1;
@@ -98,13 +114,13 @@ mod tests {
         let key = LogicalKey::Key1;
 
         // Press at 100ms
-        detector.process_button(&key, true, 100, &mut stats);
+        detector.process_button(&key, true, 100, &mut stats, true);
         assert_eq!(stats.total_presses, 1);
         assert_eq!(stats.total_releases, 0);
         assert_eq!(stats.total_chatters, 0);
 
         // Release at 150ms
-        detector.process_button(&key, false, 150, &mut stats);
+        detector.process_button(&key, false, 150, &mut stats, true);
         assert_eq!(stats.total_presses, 1);
         assert_eq!(stats.total_releases, 1);
         assert_eq!(stats.total_chatters, 0);
@@ -117,12 +133,12 @@ mod tests {
         let key = LogicalKey::Key1;
 
         // 1. Normal Press at 100ms
-        detector.process_button(&key, true, 100, &mut stats);
+        detector.process_button(&key, true, 100, &mut stats, true);
         // 2. Release at 150ms
-        detector.process_button(&key, false, 150, &mut stats);
+        detector.process_button(&key, false, 150, &mut stats, true);
 
         // 3. Chatter Press at 155ms (5ms after release < 15ms)
-        detector.process_button(&key, true, 155, &mut stats);
+        detector.process_button(&key, true, 155, &mut stats, true);
 
         assert_eq!(stats.total_presses, 1); // Should not increase
         assert_eq!(stats.total_releases, 1);
@@ -130,7 +146,7 @@ mod tests {
         assert_eq!(stats.total_chatter_releases, 1);
 
         // 4. Release at 160ms
-        detector.process_button(&key, false, 160, &mut stats);
+        detector.process_button(&key, false, 160, &mut stats, true);
         assert_eq!(stats.total_releases, 2);
     }
 
@@ -142,26 +158,29 @@ mod tests {
         let key = LogicalKey::Key1;
 
         // 1. Normal Press
-        detector.process_button(&key, true, 100, &mut stats);
-        detector.process_button(&key, false, 150, &mut stats); // Release at 150
+        detector.process_button(&key, true, 100, &mut stats, true);
+        detector.process_button(&key, false, 150, &mut stats, true); // Release at 150
 
         // 2. Chatter Press at 155 (set cooldown until 155+15 = 170)
-        detector.process_button(&key, true, 155, &mut stats);
+        detector.process_button(&key, true, 155, &mut stats, true);
         assert_eq!(stats.total_chatters, 1);
 
         // 3. Quick Release at 156
-        detector.process_button(&key, false, 156, &mut stats);
+        detector.process_button(&key, false, 156, &mut stats, true);
 
         // 4. Another Chatter Press at 158 (still < 170) -> Should be ignored
-        detector.process_button(&key, true, 158, &mut stats);
-        assert_eq!(stats.total_chatters, 1, "Should ignore press during cooldown");
+        detector.process_button(&key, true, 158, &mut stats, true);
+        assert_eq!(
+            stats.total_chatters, 1,
+            "Should ignore press during cooldown"
+        );
 
         // 5. Release at 160
-        detector.process_button(&key, false, 160, &mut stats);
+        detector.process_button(&key, false, 160, &mut stats, true);
 
         // 6. Press at 180 ( > 170) -> Should be treated as new event (but check if chatter or normal)
         // Last release was at 160. 180 - 160 = 20 > 15. So Normal Press.
-        detector.process_button(&key, true, 180, &mut stats);
+        detector.process_button(&key, true, 180, &mut stats, true);
         assert_eq!(stats.total_presses, 2);
         assert_eq!(stats.total_chatters, 1);
     }
@@ -205,21 +224,21 @@ mod tests {
         let mut stats = ButtonStats::default();
         let key = LogicalKey::Key1;
 
-        detector.process_button(&key, true, 100, &mut stats);
-        detector.process_button(&key, false, 150, &mut stats); // Release
+        detector.process_button(&key, true, 100, &mut stats, true);
+        detector.process_button(&key, false, 150, &mut stats, true); // Release
 
-        detector.process_button(&key, true, 152, &mut stats); // Chatter 1
+        detector.process_button(&key, true, 152, &mut stats, true); // Chatter 1
         assert_eq!(stats.total_chatter_releases, 1);
         assert_eq!(stats.total_chatters, 1);
 
         // Cooldown is 162.
-        detector.process_button(&key, false, 153, &mut stats); // Release
+        detector.process_button(&key, false, 153, &mut stats, true); // Release
 
         // Press at 155. Inside cooldown (155 < 162). Ignored.
-        detector.process_button(&key, true, 155, &mut stats);
+        detector.process_button(&key, true, 155, &mut stats, true);
         assert_eq!(stats.total_chatters, 1);
 
         // Release at 156.
-        detector.process_button(&key, false, 156, &mut stats);
+        detector.process_button(&key, false, 156, &mut stats, true);
     }
 }

@@ -173,6 +173,13 @@ pub struct SwitchHistoryEntry {
     pub event_type: String, // "Replace", "Reset", "ManualEdit"
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRecord {
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub duration_secs: u64,
+}
+
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserProfile {
@@ -183,6 +190,8 @@ pub struct UserProfile {
     pub switches: HashMap<LogicalKey, SwitchData>,
     #[serde(default)]
     pub switch_history: Vec<SwitchHistoryEntry>,
+    #[serde(default)]
+    pub recent_sessions: Vec<SessionRecord>,
 }
 
 impl Default for UserProfile {
@@ -193,6 +202,7 @@ impl Default for UserProfile {
             mapping: ButtonMap::default(),
             switches: HashMap::new(),
             switch_history: Vec::new(),
+            recent_sessions: Vec::new(),
         }
     }
 }
