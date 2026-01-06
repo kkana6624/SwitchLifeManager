@@ -1,4 +1,4 @@
-import { Container, Grid, Card, Text, Select, Button, Stack, Title, Table, Group, NumberInput, Divider, Alert, Code } from '@mantine/core';
+import { Container, Grid, Card, Text, Select, Button, Stack, Title, Table, Group, NumberInput, Divider, Alert, Code, Switch } from '@mantine/core';
 import { MonitorSharedState, AppConfig } from '../../types';
 import { ORDERED_KEYS } from '../../constants';
 import { invoke } from '@tauri-apps/api/core';
@@ -108,7 +108,7 @@ export function Settings({ state }: SettingsProps) {
                                 {ORDERED_KEYS.map(key => {
                                     const binding = state.bindings[key];
                                     const isBound = binding !== undefined && binding !== 0;
-                                    
+
                                     return (
                                         <Table.Tr key={key}>
                                             <Table.Td fw={500}>{key}</Table.Td>
@@ -120,8 +120,8 @@ export function Settings({ state }: SettingsProps) {
                                                 )}
                                             </Table.Td>
                                             <Table.Td>
-                                                <Button 
-                                                    size="xs" 
+                                                <Button
+                                                    size="xs"
                                                     variant="outline"
                                                     onClick={() => setLearningKey(key)}
                                                 >
@@ -135,15 +135,67 @@ export function Settings({ state }: SettingsProps) {
                         </Table>
                     </Card>
                 </Grid.Col>
+                {/* OBS Integration */}
+                <Grid.Col span={{ base: 12 }}>
+                    <Card shadow="sm" padding="lg" radius="md" withBorder>
+                        <Group justify="space-between" mb="md">
+                            <Title order={4}>OBS Integration</Title>
+                            <Text size="sm" c={state.config.obs_enabled ? "green" : "dimmed"}>
+                                {state.config.obs_enabled ? "Enabled" : "Disabled"}
+                            </Text>
+                        </Group>
+                        <Grid>
+                            <Grid.Col span={{ base: 12, md: 6 }}>
+                                <Switch
+                                    label="Enable OBS Server"
+                                    description="Starts a local HTTP server for OBS Browser Source"
+                                    checked={state.config.obs_enabled}
+                                    onChange={(event: React.ChangeEvent<HTMLInputElement>) => invoke('set_obs_enabled', { enabled: event.currentTarget.checked })}
+                                    mb="md"
+                                />
+                                <NumberInput
+                                    label="Server Port"
+                                    description="Port to listen on (Default: 36000)"
+                                    value={state.config.obs_port}
+                                    min={1024}
+                                    max={65535}
+                                    onChange={(val) => invoke('set_obs_port', { port: Number(val) })}
+                                    disabled={!state.config.obs_enabled}
+                                    mb="md"
+                                />
+                                <NumberInput
+                                    label="Overlay Refresh Rate (ms)"
+                                    description="How often OBS updates the stats (100ms - 5000ms)"
+                                    value={state.config.obs_poll_interval_ms}
+                                    min={100}
+                                    max={5000}
+                                    step={100}
+                                    onChange={(val) => invoke('set_obs_poll_interval', { intervalMs: Number(val) })}
+                                    mb="md"
+                                />
+                            </Grid.Col>
+                            <Grid.Col span={{ base: 12, md: 6 }}>
+                                <Text fw={500} mb={5}>Browser Source URL</Text>
+                                <Alert color="blue" variant="light">
+                                    <Code block>{`http://localhost:${state.config.obs_port}/`}</Code>
+                                </Alert>
+                                <Text size="xs" c="dimmed" mt="xs">
+                                    Copy this URL into OBS Studio "Browser" source properties.
+                                    Set width/height as needed (e.g. 400x600).
+                                </Text>
+                            </Grid.Col>
+                        </Grid>
+                    </Card>
+                </Grid.Col>
             </Grid>
 
             {/* Config JSON Dump (Debug) */}
             <Divider my="xl" label="Advanced" labelPosition="center" />
-             <Alert title="Current Config" color="gray" variant="light">
+            <Alert title="Current Config" color="gray" variant="light">
                 <Code block>{JSON.stringify(state.config, null, 2)}</Code>
             </Alert>
 
-            <KeyBindingModal 
+            <KeyBindingModal
                 opened={!!learningKey}
                 onClose={() => setLearningKey(null)}
                 targetKey={learningKey}

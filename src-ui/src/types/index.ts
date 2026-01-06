@@ -10,6 +10,9 @@ export interface AppConfig {
   polling_rate_ms_connected: number;
   polling_rate_ms_disconnected: number;
   target_process_name: string;
+  obs_enabled: boolean;
+  obs_port: number;
+  obs_poll_interval_ms: number;
 }
 
 export interface ButtonStats {

@@ -4,11 +4,11 @@ pub mod domain;
 pub mod infrastructure;
 pub mod usecase;
 
+use arc_swap::ArcSwap;
+use crossbeam_channel::unbounded;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use arc_swap::ArcSwap;
-use crossbeam_channel::unbounded;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
@@ -18,7 +18,7 @@ use tauri::{
 use crate::app_state::AppState;
 use crate::domain::models::InputMethod;
 use crate::infrastructure::input_source::DynamicInputSource;
-use crate::infrastructure::persistence::FileConfigRepository;
+use crate::infrastructure::persistence::{ConfigRepository, FileConfigRepository};
 use crate::infrastructure::process_monitor::SysinfoProcessMonitor;
 use crate::usecase::monitor::{MonitorService, MonitorSharedState};
 
@@ -42,20 +42,26 @@ pub fn run() {
             commands::update_config,
             commands::set_target_controller,
             commands::reset_to_default_mapping,
-            commands::set_last_replaced_date
+            commands::set_last_replaced_date,
+            commands::set_obs_enabled,
+            commands::set_obs_port,
+            commands::set_obs_poll_interval,
+            commands::get_obs_status,
         ])
         .setup(|app| {
             // --- Logger Setup ---
             if let Ok(config_path) = FileConfigRepository::get_default_config_path() {
                 let log_path = config_path.with_file_name("app.log");
                 if let Some(parent) = log_path.parent() {
-                     let _ = std::fs::create_dir_all(parent);
+                    let _ = std::fs::create_dir_all(parent);
                 }
-                
+
                 let _ = simplelog::WriteLogger::init(
                     simplelog::LevelFilter::Info,
                     simplelog::Config::default(),
-                    std::fs::File::create(log_path).unwrap_or_else(|_| std::fs::File::create("switch_life_manager.log").unwrap()),
+                    std::fs::File::create(log_path).unwrap_or_else(|_| {
+                        std::fs::File::create("switch_life_manager.log").unwrap()
+                    }),
                 );
             }
 
@@ -70,6 +76,25 @@ pub fn run() {
             let repository = FileConfigRepository::new(config_path);
             let input_source = DynamicInputSource::new(InputMethod::default());
             let process_monitor = SysinfoProcessMonitor::new();
+
+            // --- OBS Server Setup ---
+            let obs_server = Arc::new(crate::infrastructure::obs_server::ObsServer::new());
+
+            // Auto-start check
+            // We load the profile here just to check the config. MonitorService will load it again, which is fine (read-only).
+            // Note: MonitorService owns the "write" authority for profile, so this is just a snapshot read.
+            if let Ok(profile) = repository.load() {
+                if profile.config.obs_enabled {
+                    let obs = obs_server.clone();
+                    let state = shared_state.clone();
+                    let port = profile.config.obs_port;
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = obs.start(port, state).await {
+                            log::error!("Failed to auto-start OBS server: {}", e);
+                        }
+                    });
+                }
+            }
 
             // Spawn Monitor Thread
             let service_shared_state = shared_state.clone();
@@ -86,7 +111,7 @@ pub fn run() {
             });
 
             // Manage App State
-            app.manage(AppState::new(shared_state.clone(), command_tx));
+            app.manage(AppState::new(shared_state.clone(), command_tx, obs_server));
 
             // --- State Emit Loop ---
             let app_handle = app.handle().clone();
@@ -99,7 +124,7 @@ pub fn run() {
                     // Emit state-update event to frontend
                     if let Err(e) = app_handle.emit("state-update", &**state) {
                         // This might fail if the app is shutting down, which is fine
-                         log::trace!("Failed to emit state-update: {}", e);
+                        log::trace!("Failed to emit state-update: {}", e);
                     }
                 }
             });

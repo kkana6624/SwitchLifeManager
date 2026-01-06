@@ -1,9 +1,9 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LogicalKey {
@@ -58,7 +58,9 @@ impl FromStr for LogicalKey {
             "E4" => Ok(LogicalKey::E4),
             _ => {
                 if let Some(rest) = s.strip_prefix("Other-") {
-                    let id = rest.parse::<u16>().map_err(|_| format!("Invalid Other ID: {}", rest))?;
+                    let id = rest
+                        .parse::<u16>()
+                        .map_err(|_| format!("Invalid Other ID: {}", rest))?;
                     Ok(LogicalKey::Other(id))
                 } else {
                     Err(format!("Unknown LogicalKey: {}", s))
@@ -88,6 +90,22 @@ pub struct AppConfig {
     pub polling_rate_ms_connected: u64,
     pub polling_rate_ms_disconnected: u64,
     pub target_process_name: String,
+
+    // OBS Integration
+    #[serde(default)]
+    pub obs_enabled: bool,
+    #[serde(default = "default_obs_port")]
+    pub obs_port: u16,
+    #[serde(default = "default_obs_poll_interval_ms")]
+    pub obs_poll_interval_ms: u64,
+}
+
+fn default_obs_port() -> u16 {
+    36000
+}
+
+fn default_obs_poll_interval_ms() -> u64 {
+    1000
 }
 
 impl Default for AppConfig {
@@ -99,6 +117,9 @@ impl Default for AppConfig {
             polling_rate_ms_connected: 1,
             polling_rate_ms_disconnected: 1000,
             target_process_name: "bm2dx.exe".to_string(),
+            obs_enabled: false,
+            obs_port: default_obs_port(),
+            obs_poll_interval_ms: default_obs_poll_interval_ms(),
         }
     }
 }
@@ -140,7 +161,7 @@ pub struct ButtonStats {
     pub total_releases: u64,
     pub total_chatters: u64,
     pub total_chatter_releases: u64,
-    
+
     // Session stats (reset per game session)
     pub last_session_presses: u64,
     pub last_session_chatters: u64,
@@ -292,11 +313,14 @@ mod tests {
             last_session_chatters: 0,
             last_session_chatter_releases: 0,
         };
-        profile.switches.insert(LogicalKey::Key1, SwitchData {
-            switch_model_id: "omron".to_string(),
-            stats,
-            last_replaced_at: None,
-        });
+        profile.switches.insert(
+            LogicalKey::Key1,
+            SwitchData {
+                switch_model_id: "omron".to_string(),
+                stats,
+                last_replaced_at: None,
+            },
+        );
 
         let json = serde_json::to_string_pretty(&profile).unwrap();
         println!("{}", json);
