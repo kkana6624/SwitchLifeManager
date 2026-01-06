@@ -15,10 +15,10 @@ export function Report({ state }: ReportProps) {
         const switchData = state.switches[key] || {
             stats: { last_session_presses: 0, last_session_chatters: 0 }
         } as SwitchData;
-        
+
         const presses = switchData.stats.last_session_presses;
         const chatters = switchData.stats.last_session_chatters;
-        
+
         totalSessionPresses += presses;
         totalSessionChatters += chatters;
 
@@ -51,10 +51,21 @@ export function Report({ state }: ReportProps) {
         );
     });
 
+    const lastSession = state.recent_sessions && state.recent_sessions.length > 0
+        ? state.recent_sessions[state.recent_sessions.length - 1]
+        : null;
+
     return (
         <Container>
-            <Title order={4} mb="md">Session Report</Title>
-            
+            <Group justify="space-between" mb="md">
+                <Title order={4}>Session Report</Title>
+                {lastSession && (
+                    <Badge size="lg" variant="light" color="blue">
+                        {new Date(lastSession.start_time).toLocaleString()} ({lastSession.duration_secs}s)
+                    </Badge>
+                )}
+            </Group>
+
             <Card shadow="sm" radius="md" withBorder mb="lg">
                 <Group justify="space-around">
                     <Group>
