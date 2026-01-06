@@ -333,11 +333,11 @@ struct SessionRecord {
     *   `eframe` GUI実装。
     *   学習型キーコンフィグ（重複自動解消付き）。
     *   リアルタイム入力テスター。
-3.  **Phase 3: 完成度向上 (進行中)**
+3.  **Phase 3: 完成度向上 (完了)**
     *   **メインダッシュボード (完了)**: 寿命バー表示、スイッチモデル選択、一括変更機能。
     *   **寿命管理 (完了)**: 統計リセット機能の実装。
-    *   プロセス監視と自動ポップアップ（ロジック実装済み、GUI連携調整中）。
-    *   トレイ格納機能（未実装）。
+    *   **プロセス監視と自動レポート (完了)**: `bm2dx.exe` 監視とセッション統計の表示。
+    *   **トレイ格納機能 (完了)**: Tauri APIによるトレイ常駐とウィンドウ制御。
 
 ## 8. 運用・ログ設計（実装指針）
 * 予期しない切断、保存失敗、`schema_version` 不一致、プロセス監視の例外等は、ユーザー報告に必要な情報としてログに残す。
@@ -404,53 +404,43 @@ Eventsは「イベント名 + JSONペイロード」で送る。`state-update` �
     * ペイロード例: `{"sequence": 123, "snapshot": { ... }}`
     * `snapshot` の中身（推奨項目）は「3.3 スレッド間共有と同期方針（実装指針）」の `Snapshot` 推奨構成に準拠する
 
-`snapshot` の **MVP最小セット（必須）**:
+`snapshot` の **実装済み構成 (MonitorSharedState)**:
 
-* `target_controller_index: u32`
-* `connected: bool`
-* `game_running: bool`
-* `config_summary: { chatter_threshold_ms: u32, polling_rate_ms_connected: u32, polling_rate_ms_disconnected: u32 }`
-* `mapping_summary: { profile_name: string, bindings: { [logical_key: string]: u32 } }`
-* `stats: { [logical_key: string]: { total_presses: u64, total_releases: u64, total_chatters: u64, total_chatter_releases: u64, last_session_presses: u64 } }`
+* `is_connected: bool`
+* `is_game_running: bool`
+* `config: AppConfig`
+* `profile_name: string`
+* `bindings: { [logical_key: string]: u32 }`
+* `switches: { [logical_key: string]: SwitchData }`
+* `switch_history: SwitchHistoryEntry[]`
+* `current_pressed_keys: string[]` (LogicalKeyの配列)
 * `raw_button_state: u32`
-
-`snapshot` の **推奨拡張（任意）**:
-
-* `input_tester: { [logical_key: string]: { pressed: bool, last_chatter_at_ms?: u64, physical_raw?: u16 } }`
-* `last_input_at_ms: u64`（監視が動いている可視化用）
-* `save_status: { last_save_at_ms?: u64, last_save_result?: { ok: bool, message?: string } }`
-* `recent_events: [{ at_ms: u64, kind: string, message?: string }]`（簡易ログ用。最大件数は固定）
+* `last_status_message: string | null`
+* `last_save_result: { success: bool, message: string, timestamp: string } | null`
+* `recent_sessions: SessionRecord[]`
 
 補足:
-
 * `bindings` のキー（`logical_key`）は 9.4.1 の表記ルールに従い、`Other-12` 等も含められる。
 * UI側で導出できる値（寿命残量%、チャタリング率など）は「UI計算」か「Snapshot同梱」のどちらかに統一し、二重計算しない。
-* `connection-changed`（接続/切断の遷移時）
-    * ペイロード例: `{"connected": true, "target_controller_index": 0}`
-* `game-started` / `game-exited`（プロセス監視）
-    * ペイロード例: `{"process_name": "bm2dx.exe"}`
-    * `game-exited` はUIのレポート表示トリガ。必要なら「セッション統計の要約」を同梱する
-* `save-succeeded` / `save-failed`（Atomic Save）
-    * ペイロード例:
-        * 成功: `{"saved_at_ms": 1735526400000}`
-        * 失敗: `{"error": "..."}`
+* `recent_sessions` は直近3件のセッション履歴を含む。
 
 Commands（例）:
 
 * `get_snapshot`
-* `set_target_controller(index)`
-* `start_learning(logical_key)` / `cancel_learning`
-* `set_binding(logical_key, physical)`（重複は旧キーをUnboundへ）
-* `reset_to_default_mapping`
-* `set_switch_model(logical_key, model_id)`
-* `reset_stats(logical_key)` / `bulk_apply(model_id, keys[])`
+* `update_config(config)`
+* `set_key_binding(key, button)`
+* `update_mapping(name, bindings)`
+* `replace_switch(key, new_model_id)`
+* `reset_stats(key)`
+* `set_last_replaced_date(key, date)`
+* `force_save`
+* `shutdown`
 
-Events（例）:
+Events:
 
-* `state-update`（UI描画用スナップショット）
-* `connection-changed`
-* `game-started` / `game-exited`（Report表示トリガ）
-* `save-succeeded` / `save-failed`
+* `state-update`（定期送信: 30Hz）
+    * ペイロード: `MonitorSharedState` (前述のSnapshot)
+    * 補足: 接続状態の変化、ゲーム開始/終了、保存結果などはすべてこのSnapshot内のフィールド（`is_connected`, `is_game_running`, `last_save_result` 等）の変化として通知される。個別のイベント（`game-started`等）は発行しない実装となっている。
 
 ### 9.5 保存先（Tauri移行後）とデータ移行
 
