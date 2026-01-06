@@ -7,13 +7,13 @@ interface HistoryProps {
 
 export function History({ state }: HistoryProps) {
     // Sort by date desc
-    const sortedHistory = [...state.switch_history].sort((a, b) => 
+    const sortedHistory = [...state.switch_history].sort((a, b) =>
         new Date(b.date).getTime() - new Date(a.date).getTime()
     );
 
     return (
         <Container fluid>
-            <Title order={4} mb="md">Replacement History</Title>
+            <Title order={4} mb="md">Maintenance Log</Title>
             <Table striped highlightOnHover>
                 <Table.Thead>
                     <Table.Tr>
@@ -31,8 +31,8 @@ export function History({ state }: HistoryProps) {
                             <Table.Td>{entry.key}</Table.Td>
                             <Table.Td>{entry.event_type}</Table.Td>
                             <Table.Td>
-                                {entry.old_model_id !== entry.new_model_id 
-                                    ? `${entry.old_model_id} -> ${entry.new_model_id}` 
+                                {entry.old_model_id !== entry.new_model_id
+                                    ? `${entry.old_model_id} -> ${entry.new_model_id}`
                                     : entry.new_model_id}
                             </Table.Td>
                             <Table.Td>

@@ -5,8 +5,9 @@ import { useState } from 'react';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { Settings } from './features/settings/Settings';
 import { InputTester } from './features/tester/InputTester';
-import { Report } from './features/report/Report';
-import { History } from './features/history/History';
+import { LiveSession } from './features/live/LiveSession';
+import { SessionHistory } from './features/sessions/SessionHistory';
+import { History as MaintenanceHistory } from './features/history/History';
 
 function App() {
   const [opened, { toggle }] = useDisclosure();
@@ -50,15 +51,21 @@ function App() {
           variant="filled"
         />
         <NavLink
-          label="History"
-          active={activeTab === 'history'}
-          onClick={() => setActiveTab('history')}
+          label="Live Session"
+          active={activeTab === 'live'}
+          onClick={() => setActiveTab('live')}
           variant="filled"
         />
         <NavLink
-          label="Session Report"
-          active={activeTab === 'report'}
-          onClick={() => setActiveTab('report')}
+          label="Past Sessions"
+          active={activeTab === 'sessions'}
+          onClick={() => setActiveTab('sessions')}
+          variant="filled"
+        />
+        <NavLink
+          label="Maintenance Log"
+          active={activeTab === 'maintenance'}
+          onClick={() => setActiveTab('maintenance')}
           variant="filled"
         />
         <NavLink
@@ -72,9 +79,11 @@ function App() {
       <AppShell.Main>
         {activeTab === 'dashboard' && <Dashboard state={state} />}
         {activeTab === 'tester' && <InputTester state={state} />}
-        {activeTab === 'history' && <History state={state} />}
+        {activeTab === 'live' && <LiveSession state={state} />}
+        {activeTab === 'sessions' && <SessionHistory state={state} />}
+        {/* Reusing History component for Maintenance Log */}
+        {activeTab === 'maintenance' && <MaintenanceHistory state={state} />}
         {activeTab === 'settings' && <Settings state={state} />}
-        {activeTab === 'report' && <Report state={state} />}
       </AppShell.Main>
     </AppShell>
   );
