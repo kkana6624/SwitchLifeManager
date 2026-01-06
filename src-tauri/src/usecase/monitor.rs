@@ -6,7 +6,7 @@ use log::{error, info};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use crate::domain::errors::InputError;
 use crate::domain::interfaces::InputSource;

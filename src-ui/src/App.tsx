@@ -14,7 +14,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
 
   if (!state) {
-      return <Text p="md">Connecting to backend...</Text>;
+    return <Text p="md">Connecting to backend...</Text>;
   }
 
   return (
@@ -29,7 +29,7 @@ function App() {
           <Title order={3}>Switch Life Manager</Title>
           <Group ml="auto">
             <Badge color={state.is_connected ? "green" : "red"}>
-                {state.is_connected ? "Connected" : "Disconnected"}
+              {state.is_connected ? "Connected" : "Disconnected"}
             </Badge>
             {state.is_game_running && <Badge color="blue">In Game</Badge>}
           </Group>
@@ -37,35 +37,35 @@ function App() {
       </AppShell.Header>
 
       <AppShell.Navbar p="md">
-        <NavLink 
-            label="Dashboard" 
-            active={activeTab === 'dashboard'} 
-            onClick={() => setActiveTab('dashboard')} 
-            variant="filled"
+        <NavLink
+          label="Dashboard"
+          active={activeTab === 'dashboard'}
+          onClick={() => setActiveTab('dashboard')}
+          variant="filled"
         />
-        <NavLink 
-            label="Input Tester" 
-            active={activeTab === 'tester'} 
-            onClick={() => setActiveTab('tester')} 
-            variant="filled"
+        <NavLink
+          label="Input Tester"
+          active={activeTab === 'tester'}
+          onClick={() => setActiveTab('tester')}
+          variant="filled"
         />
-        <NavLink 
-            label="History" 
-            active={activeTab === 'history'} 
-            onClick={() => setActiveTab('history')} 
-            variant="filled"
+        <NavLink
+          label="History"
+          active={activeTab === 'history'}
+          onClick={() => setActiveTab('history')}
+          variant="filled"
         />
-        <NavLink 
-            label="Settings" 
-            active={activeTab === 'settings'} 
-            onClick={() => setActiveTab('settings')} 
-            variant="filled"
+        <NavLink
+          label="Session Report"
+          active={activeTab === 'report'}
+          onClick={() => setActiveTab('report')}
+          variant="filled"
         />
-        <NavLink 
-            label="Report" 
-            active={activeTab === 'report'} 
-            onClick={() => setActiveTab('report')} 
-            variant="filled"
+        <NavLink
+          label="Settings"
+          active={activeTab === 'settings'}
+          onClick={() => setActiveTab('settings')}
+          variant="filled"
         />
       </AppShell.Navbar>
 

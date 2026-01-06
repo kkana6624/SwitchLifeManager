@@ -141,7 +141,7 @@ export function Dashboard({ state }: DashboardProps) {
             {/* Session Info Section */}
             <Grid mb="lg">
                 <Grid.Col span={{ base: 12, md: 6 }}>
-                    <Paper shadow="xs" p="md" withBorder>
+                    <Paper shadow="xs" p="md" withBorder h="100%">
                         <Group justify="space-between" mb="xs">
                             <Title order={5}>Session Stats ({state.is_game_running ? "Live" : "Previous"})</Title>
                             {state.is_game_running && <Badge color="green" variant="dot">Running</Badge>}
@@ -164,20 +164,27 @@ export function Dashboard({ state }: DashboardProps) {
                 </Grid.Col>
 
                 <Grid.Col span={{ base: 12, md: 6 }}>
-                    <Paper shadow="xs" p="md" withBorder>
+                    <Paper shadow="xs" p="md" withBorder h="100%">
                         <Title order={5} mb="xs">Recent Sessions (Last 3)</Title>
-                        {state.recent_sessions && state.recent_sessions.length > 0 ? (
-                            <Stack gap="xs">
-                                {state.recent_sessions.slice().reverse().map((session, idx) => (
-                                    <Group key={idx} justify="space-between">
-                                        <Text size="sm">{new Date(session.start_time).toLocaleString()}</Text>
-                                        <Badge variant="outline">{session.duration_secs}s</Badge>
+                        <Stack gap="xs">
+                            {[0, 1, 2].map((i) => {
+                                // recent_sessions is ordered oldest to newest in backend, so reverse for display
+                                const session = state.recent_sessions && state.recent_sessions.length > 0
+                                    ? [...state.recent_sessions].reverse()[i]
+                                    : undefined;
+
+                                return (
+                                    <Group key={i} justify="space-between" h={28}>
+                                        <Text size="sm">
+                                            {session ? new Date(session.start_time).toLocaleString() : "-"}
+                                        </Text>
+                                        <Badge variant={session ? "outline" : "transparent"} c={session ? undefined : "dimmed"}>
+                                            {session ? `${session.duration_secs}s` : "-"}
+                                        </Badge>
                                     </Group>
-                                ))}
-                            </Stack>
-                        ) : (
-                            <Text size="sm" c="dimmed">No recent sessions recorded.</Text>
-                        )}
+                                );
+                            })}
+                        </Stack>
                     </Paper>
                 </Grid.Col>
             </Grid>
@@ -187,7 +194,15 @@ export function Dashboard({ state }: DashboardProps) {
                 {ORDERED_KEYS.map(key => {
                     const switchData = state.switches[key] || {
                         switch_model_id: "generic_unknown",
-                        stats: { total_presses: 0, total_chatters: 0 }
+                        stats: {
+                            total_presses: 0,
+                            total_releases: 0,
+                            total_chatters: 0,
+                            total_chatter_releases: 0,
+                            last_session_presses: 0,
+                            last_session_chatters: 0,
+                            last_session_chatter_releases: 0
+                        }
                     } as SwitchData;
 
                     const model = getSwitchModel(switchData.switch_model_id);
