@@ -48,6 +48,12 @@ export interface LastSaveResult {
   timestamp: string;
 }
 
+export interface SessionRecord {
+  start_time: string;
+  end_time: string;
+  duration_secs: number;
+}
+
 export interface MonitorSharedState {
   is_connected: boolean;
   is_game_running: boolean;
@@ -60,4 +66,5 @@ export interface MonitorSharedState {
   raw_button_state: number;
   last_status_message: string | null;
   last_save_result: LastSaveResult | null;
+  recent_sessions: SessionRecord[];
 }

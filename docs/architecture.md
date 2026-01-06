@@ -32,7 +32,10 @@ Rev.2では、接続安定性、汎用的なキーマッピング、データの
     * スイッチカタログ（型番・定格寿命）に基づき、寿命残量を可視化する。
 * **プロセス連携・自動レポート**:
     * `bm2dx.exe` の終了を検知し、ウィンドウを自動ポップアップしてレポートを表示。
-    * **セッションの定義**: 「ゲームプロセス（`bm2dx.exe`）の起動〜終了」を1セッションとし、`last_session_presses` 等のセッション系カウンタはゲーム起動検知時に0へリセットして終了時にレポートに使用する（累計系カウンタは継続加算）。
+    * **セッションの定義 (Rev.3 変更)**: 「ゲームプロセス（`bm2dx.exe`）の起動〜終了」を1セッションとする。
+    * **厳密な記録**: ゲームプロセス起動中のみ、入力回数をセッション統計 (`last_session_*`) に加算する。待機中（ゲーム非起動時）の入力は、累計 (`total_*`) には加算するが、セッション統計には加算しない。
+    * **前回の統計**: ゲームプロセスが起動していない間は、直前のセッション（最後にゲームが終了した時点）の統計値をUIへ表示し続ける（0リセットしない）。
+    * **直近セッション履歴**: 直近3回のセッションについて、開始時刻・終了時刻・プレイ時間を記録し、UIへ表示する。
 * **常駐・トレイ格納**:
     * 「閉じる」でタスクトレイ格納。トレイアイコンから復帰・終了操作。
 * **入力テスター機能 (New)**:
@@ -214,6 +217,15 @@ struct UserProfile {
     mapping: ButtonMap,
     switches: HashMap<LogicalKey, SwitchData>,
     switch_history: Vec<SwitchHistoryEntry>,
+    #[serde(default)]
+    recent_sessions: Vec<SessionRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionRecord {
+    start_time: DateTime<Utc>,
+    end_time: DateTime<Utc>,
+    duration_secs: u64,
 }
 ```
 
