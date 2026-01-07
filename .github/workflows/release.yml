@@ -80,6 +80,6 @@ jobs:
             ${{ env.ASSET_PATH }}
             ${{ env.INSTALLER_PATH }}
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref, 'beta') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
