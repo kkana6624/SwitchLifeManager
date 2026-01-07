@@ -1,5 +1,6 @@
 use crate::app_state::AppState;
-use crate::domain::models::{AppConfig, ButtonMap, LogicalKey};
+use crate::domain::models::{AppConfig, ButtonMap, LogicalKey, SessionKeyStats, SessionRecord};
+
 use crate::usecase::monitor::{MonitorCommand, MonitorSharedState};
 use chrono::{DateTime, Utc};
 use tauri::State;
@@ -128,4 +129,29 @@ pub async fn get_obs_status(state: State<'_, AppState>) -> Result<String, String
     } else {
         Ok("Stopped".to_string())
     }
+}
+
+#[tauri::command]
+pub async fn get_history_sessions(
+    state: State<'_, AppState>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<SessionRecord>, String> {
+    state
+        .session_repository
+        .get_recent(limit, offset)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_session_details(
+    state: State<'_, AppState>,
+    session_id: i64,
+) -> Result<Vec<SessionKeyStats>, String> {
+    state
+        .session_repository
+        .get_details(session_id)
+        .await
+        .map_err(|e| e.to_string())
 }

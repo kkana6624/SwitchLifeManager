@@ -17,6 +17,8 @@ use tauri::{
 
 use crate::app_state::AppState;
 use crate::domain::models::InputMethod;
+use crate::domain::repositories::SessionRepository;
+use crate::infrastructure::database::SqliteRepository;
 use crate::infrastructure::input_source::DynamicInputSource;
 use crate::infrastructure::persistence::{ConfigRepository, FileConfigRepository};
 use crate::infrastructure::process_monitor::SysinfoProcessMonitor;
@@ -47,6 +49,8 @@ pub fn run() {
             commands::set_obs_port,
             commands::set_obs_poll_interval,
             commands::get_obs_status,
+            commands::get_history_sessions,
+            commands::get_session_details,
         ])
         .setup(|app| {
             // --- Logger Setup ---
@@ -73,9 +77,16 @@ pub fn run() {
             // Default config path: %LOCALAPPDATA%/SwitchLifeManager/profile.json
             let config_path = FileConfigRepository::get_default_config_path()
                 .expect("Failed to determine config path");
-            let repository = FileConfigRepository::new(config_path);
+            let repository = FileConfigRepository::new(config_path.clone());
             let input_source = DynamicInputSource::new(InputMethod::default());
             let process_monitor = SysinfoProcessMonitor::new();
+
+            // Initialize DB (same directory as config)
+            let db_path = config_path.with_file_name("history.db");
+            let session_repository =
+                tauri::async_runtime::block_on(async { SqliteRepository::new(&db_path).await })
+                    .expect("Failed to initialize database");
+            let session_repo_arc: Arc<dyn SessionRepository> = Arc::new(session_repository);
 
             // --- OBS Server Setup ---
             let obs_server = Arc::new(crate::infrastructure::obs_server::ObsServer::new());
@@ -98,11 +109,13 @@ pub fn run() {
 
             // Spawn Monitor Thread
             let service_shared_state = shared_state.clone();
+            let monitor_repo = session_repo_arc.clone();
             thread::spawn(move || {
                 let service = MonitorService::new(
                     input_source,
                     process_monitor,
                     repository,
+                    monitor_repo,
                     command_rx,
                     service_shared_state,
                 )
@@ -111,7 +124,12 @@ pub fn run() {
             });
 
             // Manage App State
-            app.manage(AppState::new(shared_state.clone(), command_tx, obs_server));
+            app.manage(AppState::new(
+                shared_state.clone(),
+                command_tx,
+                obs_server,
+                session_repo_arc,
+            ));
 
             // --- State Emit Loop ---
             let app_handle = app.handle().clone();

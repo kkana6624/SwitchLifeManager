@@ -1,15 +1,18 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use crossbeam_channel::bounded;
-    use arc_swap::ArcSwap;
-    use anyhow::Result;
-    use crate::domain::models::{AppConfig, UserProfile};
-    use crate::domain::interfaces::InputSource;
     use crate::domain::errors::InputError;
+    use crate::domain::interfaces::InputSource;
+    use crate::domain::models::{AppConfig, UserProfile};
+    use crate::domain::models::{SessionKeyStats, SessionRecord};
+    use crate::domain::repositories::SessionRepository;
     use crate::infrastructure::persistence::ConfigRepository;
     use crate::infrastructure::process_monitor::ProcessMonitor;
-    use crate::usecase::monitor::{MonitorService, MonitorCommand, MonitorSharedState};
+    use crate::usecase::monitor::{MonitorCommand, MonitorService, MonitorSharedState};
+    use anyhow::Result;
+    use arc_swap::ArcSwap;
+    use async_trait::async_trait;
+    use crossbeam_channel::bounded;
+    use std::sync::Arc;
 
     // --- Mocks ---
 
@@ -44,6 +47,21 @@ mod tests {
         }
     }
 
+    struct MockSessionRepository;
+
+    #[async_trait]
+    impl SessionRepository for MockSessionRepository {
+        async fn save(&self, _session: &SessionRecord, _stats: &[SessionKeyStats]) -> Result<i64> {
+            Ok(1)
+        }
+        async fn get_recent(&self, _limit: i64, _offset: i64) -> Result<Vec<SessionRecord>> {
+            Ok(vec![])
+        }
+        async fn get_details(&self, _session_id: i64) -> Result<Vec<SessionKeyStats>> {
+            Ok(vec![])
+        }
+    }
+
     // --- Tests ---
 
     #[test]
@@ -56,8 +74,11 @@ mod tests {
         };
         let input = MockInputSource;
         let process = MockProcessMonitor;
+        let session_repo = Arc::new(MockSessionRepository);
 
-        let mut service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+        let mut service =
+            MonitorService::new(input, process, repo, session_repo, rx, shared_state.clone())
+                .unwrap();
 
         // Verify initial config
         assert_eq!(service.profile.config.target_controller_index, 0);
@@ -76,9 +97,8 @@ mod tests {
 
     #[test]
     fn test_reset_stats_and_replace_switch() {
-        use crate::domain::models::{LogicalKey, SwitchData, ButtonStats};
-        use std::collections::HashMap;
-        use chrono::{DateTime, Utc};
+        use crate::domain::models::{ButtonStats, LogicalKey, SwitchData};
+        use chrono::Utc;
 
         let (_tx, rx) = bounded(10);
         let shared_state = Arc::new(ArcSwap::from_pointee(MonitorSharedState::default()));
@@ -86,53 +106,75 @@ mod tests {
         // Setup profile with some data
         let mut profile = UserProfile::default();
         let key = LogicalKey::Key1;
-        profile.switches.insert(key.clone(), SwitchData {
-            switch_model_id: "old_model".to_string(),
-            stats: ButtonStats {
-                total_presses: 100,
-                total_chatters: 10,
-                ..Default::default()
+        profile.switches.insert(
+            key.clone(),
+            SwitchData {
+                switch_model_id: "old_model".to_string(),
+                stats: ButtonStats {
+                    total_presses: 100,
+                    total_chatters: 10,
+                    ..Default::default()
+                },
+                last_replaced_at: None,
             },
-            last_replaced_at: None,
-        });
+        );
 
         let repo = MockRepository { profile };
         let input = MockInputSource;
         let process = MockProcessMonitor;
+        let session_repo = Arc::new(MockSessionRepository);
 
-        let mut service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+        let mut service =
+            MonitorService::new(input, process, repo, session_repo, rx, shared_state.clone())
+                .unwrap();
 
         // 1. Test ResetStats
         service.handle_command(MonitorCommand::ResetStats { key: key.clone() });
-        
+
         let switch = service.profile.switches.get(&key).unwrap();
         assert_eq!(switch.stats.total_presses, 0);
         assert_eq!(switch.stats.total_chatters, 0);
         assert_eq!(switch.switch_model_id, "old_model");
         assert!(switch.last_replaced_at.is_some());
-        
+
         // History check
         assert_eq!(service.profile.switch_history.len(), 1);
         assert_eq!(service.profile.switch_history[0].event_type, "Reset");
-        assert_eq!(service.profile.switch_history[0].previous_stats.total_presses, 100);
+        assert_eq!(
+            service.profile.switch_history[0]
+                .previous_stats
+                .total_presses,
+            100
+        );
 
         // Simulate usage again
-        service.profile.switches.get_mut(&key).unwrap().stats.total_presses = 50;
+        service
+            .profile
+            .switches
+            .get_mut(&key)
+            .unwrap()
+            .stats
+            .total_presses = 50;
 
         // 2. Test ReplaceSwitch
-        service.handle_command(MonitorCommand::ReplaceSwitch { 
-            key: key.clone(), 
-            new_model_id: "new_model".to_string() 
+        service.handle_command(MonitorCommand::ReplaceSwitch {
+            key: key.clone(),
+            new_model_id: "new_model".to_string(),
         });
 
         let switch = service.profile.switches.get(&key).unwrap();
         assert_eq!(switch.stats.total_presses, 0);
         assert_eq!(switch.switch_model_id, "new_model");
-        
+
         // History check
         assert_eq!(service.profile.switch_history.len(), 2);
         assert_eq!(service.profile.switch_history[1].event_type, "Replace");
-        assert_eq!(service.profile.switch_history[1].previous_stats.total_presses, 50);
+        assert_eq!(
+            service.profile.switch_history[1]
+                .previous_stats
+                .total_presses,
+            50
+        );
 
         // 3. Test SetLastReplacedDate
         let now = Utc::now();
@@ -142,7 +184,7 @@ mod tests {
         });
         let switch = service.profile.switches.get(&key).unwrap();
         assert_eq!(switch.last_replaced_at, Some(now));
-        
+
         // History check
         assert_eq!(service.profile.switch_history.len(), 3);
         assert_eq!(service.profile.switch_history[2].event_type, "ManualEdit");
@@ -151,12 +193,12 @@ mod tests {
     #[test]
     fn test_shared_state_includes_config() {
         // This validates the glue code change: MonitorSharedState must have 'config' field.
-        
+
         let shared_state = Arc::new(ArcSwap::from_pointee(MonitorSharedState::default()));
         // Just compiling this accesses the field, proving existence.
         let snapshot = shared_state.load();
-        let _config: &AppConfig = &snapshot.config; 
-        
+        let _config: &AppConfig = &snapshot.config;
+
         // Let's verify default values match
         assert_eq!(_config.target_controller_index, 0);
     }

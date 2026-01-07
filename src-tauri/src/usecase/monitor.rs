@@ -10,7 +10,10 @@ use std::time::{Duration, Instant};
 
 use crate::domain::errors::InputError;
 use crate::domain::interfaces::InputSource;
-use crate::domain::models::{AppConfig, ButtonStats, LogicalKey, SwitchHistoryEntry, UserProfile};
+use crate::domain::models::{
+    AppConfig, ButtonStats, LogicalKey, SessionKeyStats, SwitchHistoryEntry, UserProfile,
+};
+use crate::domain::repositories::SessionRepository;
 use crate::infrastructure::persistence::ConfigRepository;
 use crate::infrastructure::process_monitor::ProcessMonitor;
 use crate::infrastructure::timer::HighResolutionTimer;
@@ -91,6 +94,8 @@ pub struct MonitorService<I, P, R> {
     // Cached Arc for bindings to avoid recreating it when not changed
     cached_bindings: Arc<HashMap<LogicalKey, u32>>,
     cached_history: Arc<Vec<SwitchHistoryEntry>>,
+
+    session_repository: Arc<dyn SessionRepository>,
 }
 
 impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P, R> {
@@ -98,6 +103,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
         mut input_source: I,
         process_monitor: P,
         repository: R,
+        session_repository: Arc<dyn SessionRepository>,
         command_rx: Receiver<MonitorCommand>,
         shared_state: Arc<ArcSwap<MonitorSharedState>>,
     ) -> Result<Self> {
@@ -125,6 +131,7 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             current_session_start: None,
             cached_bindings,
             cached_history,
+            session_repository,
         })
     }
 
@@ -434,18 +441,46 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
                         let duration_secs = (end_time - start_time).num_seconds().max(0) as u64;
 
                         let record = crate::domain::models::SessionRecord {
+                            id: None,
                             start_time,
                             end_time,
                             duration_secs,
                         };
 
-                        self.profile.recent_sessions.push(record);
+                        self.profile.recent_sessions.push(record.clone());
                         // Keep last 3 sessions
                         if self.profile.recent_sessions.len() > 3 {
                             self.profile.recent_sessions.remove(0); // Remove oldest
                         }
 
                         info!("Session recorded: {}s", duration_secs);
+
+                        // --- DB Persistence ---
+                        // Convert internal stats to DB stats
+                        // We use the 'last_session_*' stats from the switches
+                        let mut db_stats = Vec::new();
+                        for (key, switch) in &self.profile.switches {
+                            // Only record keys that had activity? Or all?
+                            // Recording all keys seems safer for complete history.
+                            db_stats.push(SessionKeyStats {
+                                session_id: 0,             // Ignored by DB insert
+                                key_name: key.to_string(), // Use Display impl
+                                presses: switch.stats.last_session_presses,
+                                chatters: switch.stats.last_session_chatters,
+                                chatter_releases: switch.stats.last_session_chatter_releases,
+                            });
+                        }
+
+                        let repo = self.session_repository.clone();
+                        let rec = record.clone();
+                        // Blocking call to async DB save
+                        tauri::async_runtime::block_on(async move {
+                            if let Err(e) = repo.save(&rec, &db_stats).await {
+                                error!("Failed to save session to DB: {}", e);
+                            } else {
+                                info!("Session saved to DB successfully.");
+                            }
+                        });
                     }
 
                     // Report logic... (simplified)

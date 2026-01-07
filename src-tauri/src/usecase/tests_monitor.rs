@@ -1,17 +1,20 @@
 #[cfg(test)]
 pub mod tests {
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
-    use std::thread;
-    use crossbeam_channel::bounded;
-    use arc_swap::ArcSwap;
-    use anyhow::Result;
-    use crate::domain::models::{ButtonStats, LogicalKey, UserProfile};
-    use crate::domain::interfaces::InputSource;
     use crate::domain::errors::InputError;
+    use crate::domain::interfaces::InputSource;
+    use crate::domain::models::{ButtonStats, LogicalKey, UserProfile};
+    use crate::domain::models::{SessionKeyStats, SessionRecord};
+    use crate::domain::repositories::SessionRepository;
     use crate::infrastructure::persistence::ConfigRepository;
     use crate::infrastructure::process_monitor::ProcessMonitor;
-    use crate::usecase::monitor::{MonitorService, MonitorCommand, MonitorSharedState};
+    use crate::usecase::monitor::{MonitorCommand, MonitorService, MonitorSharedState};
+    use anyhow::Result;
+    use arc_swap::ArcSwap;
+    use async_trait::async_trait;
+    use crossbeam_channel::bounded;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
 
     // --- Mocks ---
 
@@ -57,6 +60,21 @@ pub mod tests {
         }
     }
 
+    struct MockSessionRepository;
+
+    #[async_trait]
+    impl SessionRepository for MockSessionRepository {
+        async fn save(&self, _session: &SessionRecord, _stats: &[SessionKeyStats]) -> Result<i64> {
+            Ok(1)
+        }
+        async fn get_recent(&self, _limit: i64, _offset: i64) -> Result<Vec<SessionRecord>> {
+            Ok(vec![])
+        }
+        async fn get_details(&self, _session_id: i64) -> Result<Vec<SessionKeyStats>> {
+            Ok(vec![])
+        }
+    }
+
     // --- Tests ---
 
     #[test]
@@ -69,13 +87,15 @@ pub mod tests {
         };
         let input = MockInputSource {
             state_val: Arc::new(Mutex::new(0)),
-            is_disconnected: Arc::new(Mutex::new(false))
+            is_disconnected: Arc::new(Mutex::new(false)),
         };
         let process = MockProcessMonitor {
-            is_running: Arc::new(Mutex::new(false))
+            is_running: Arc::new(Mutex::new(false)),
         };
+        let session_repo = Arc::new(MockSessionRepository);
 
-        let service = MonitorService::new(input, process, repo, rx, shared_state.clone());
+        let service =
+            MonitorService::new(input, process, repo, session_repo, rx, shared_state.clone());
         assert!(service.is_ok());
     }
 
@@ -92,22 +112,30 @@ pub mod tests {
         stats.total_presses = 100;
         stats.total_chatters = 5;
 
-        profile.switches.insert(key.clone(), crate::domain::models::SwitchData {
-            switch_model_id: "old_model".to_string(),
-            stats: stats.clone(),
-            last_replaced_at: None,
-        });
+        profile.switches.insert(
+            key.clone(),
+            crate::domain::models::SwitchData {
+                switch_model_id: "old_model".to_string(),
+                stats: stats.clone(),
+                last_replaced_at: None,
+            },
+        );
 
-        let repo = MockRepository { profile: profile.clone() };
+        let repo = MockRepository {
+            profile: profile.clone(),
+        };
         let input = MockInputSource {
             state_val: Arc::new(Mutex::new(0)),
-            is_disconnected: Arc::new(Mutex::new(false))
+            is_disconnected: Arc::new(Mutex::new(false)),
         };
         let process = MockProcessMonitor {
-            is_running: Arc::new(Mutex::new(false))
+            is_running: Arc::new(Mutex::new(false)),
         };
+        let session_repo = Arc::new(MockSessionRepository);
 
-        let mut service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+        let mut service =
+            MonitorService::new(input, process, repo, session_repo, rx, shared_state.clone())
+                .unwrap();
 
         // 1. Test ResetStats
         service.handle_command(MonitorCommand::ResetStats { key: key.clone() });
@@ -120,11 +148,17 @@ pub mod tests {
 
         // 2. Test ReplaceSwitch
         // First simulate some usage again
-        service.profile.switches.get_mut(&key).unwrap().stats.total_presses = 50;
+        service
+            .profile
+            .switches
+            .get_mut(&key)
+            .unwrap()
+            .stats
+            .total_presses = 50;
 
         service.handle_command(MonitorCommand::ReplaceSwitch {
             key: key.clone(),
-            new_model_id: "new_model".to_string()
+            new_model_id: "new_model".to_string(),
         });
 
         let switch = service.profile.switches.get(&key).unwrap();
@@ -144,21 +178,33 @@ pub mod tests {
         let repo = MockRepository { profile };
         let input = MockInputSource {
             state_val: Arc::new(Mutex::new(0)),
-            is_disconnected: Arc::new(Mutex::new(false))
+            is_disconnected: Arc::new(Mutex::new(false)),
         };
         let process = MockProcessMonitor {
-            is_running: Arc::new(Mutex::new(false))
+            is_running: Arc::new(Mutex::new(false)),
         };
+        let session_repo = Arc::new(MockSessionRepository);
 
-        let mut service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+        let mut service =
+            MonitorService::new(input, process, repo, session_repo, rx, shared_state.clone())
+                .unwrap();
 
         // Attempt to assign Key2 -> Button 1 (Conflict)
-        service.handle_command(MonitorCommand::SetKeyBinding { key: LogicalKey::Key2, button: 1 });
+        service.handle_command(MonitorCommand::SetKeyBinding {
+            key: LogicalKey::Key2,
+            button: 1,
+        });
 
         // Key1 should be unbound (set to 0)
-        assert_eq!(service.profile.mapping.bindings.get(&LogicalKey::Key1), Some(&0));
+        assert_eq!(
+            service.profile.mapping.bindings.get(&LogicalKey::Key1),
+            Some(&0)
+        );
         // Key2 should be inserted
-        assert_eq!(service.profile.mapping.bindings.get(&LogicalKey::Key2), Some(&1));
+        assert_eq!(
+            service.profile.mapping.bindings.get(&LogicalKey::Key2),
+            Some(&1)
+        );
     }
 
     #[test]
@@ -176,11 +222,14 @@ pub mod tests {
         let mut stats = ButtonStats::default();
         stats.total_presses = 100;
         stats.last_session_presses = 50;
-        profile.switches.insert(key.clone(), crate::domain::models::SwitchData {
-            switch_model_id: "test".to_string(),
-            stats: stats,
-            last_replaced_at: None,
-        });
+        profile.switches.insert(
+            key.clone(),
+            crate::domain::models::SwitchData {
+                switch_model_id: "test".to_string(),
+                stats: stats,
+                last_replaced_at: None,
+            },
+        );
         // Set update frequency very high for test
         profile.config.polling_rate_ms_connected = 1;
 
@@ -191,13 +240,16 @@ pub mod tests {
 
         let input = MockInputSource {
             state_val: state_val.clone(),
-            is_disconnected: Arc::new(Mutex::new(false))
+            is_disconnected: Arc::new(Mutex::new(false)),
         };
         let process = MockProcessMonitor {
-            is_running: is_running.clone()
+            is_running: is_running.clone(),
         };
+        let session_repo = Arc::new(MockSessionRepository);
 
-        let service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+        let service =
+            MonitorService::new(input, process, repo, session_repo, rx, shared_state.clone())
+                .unwrap();
 
         // Run monitor in background thread
         let handle = thread::spawn(move || {
@@ -206,7 +258,8 @@ pub mod tests {
 
         // 1. Verify initial state (via shared state) with Retry Loop
         let mut found = false;
-        for _ in 0..40 { // Wait up to 2s
+        for _ in 0..40 {
+            // Wait up to 2s
             thread::sleep(Duration::from_millis(50));
             let snapshot = shared_state.load();
             if let Some(data) = snapshot.switches.get(&key) {
@@ -216,7 +269,10 @@ pub mod tests {
                 }
             }
         }
-        assert!(found, "Timed out waiting for initial state with 50 session presses");
+        assert!(
+            found,
+            "Timed out waiting for initial state with 50 session presses"
+        );
 
         // 2. Start Game -> Should reset session stats
         *is_running.lock().unwrap() = true;
@@ -227,9 +283,12 @@ pub mod tests {
 
         let snapshot = shared_state.load();
         if let Some(data) = snapshot.switches.get(&key) {
-             assert_eq!(data.stats.last_session_presses, 0, "Session presses should be reset after game start");
+            assert_eq!(
+                data.stats.last_session_presses, 0,
+                "Session presses should be reset after game start"
+            );
         } else {
-             panic!("Key missing from stats after game start");
+            panic!("Key missing from stats after game start");
         }
 
         // 3. Stop Game -> Logic (logs)

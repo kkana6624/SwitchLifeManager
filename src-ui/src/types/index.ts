@@ -52,9 +52,18 @@ export interface LastSaveResult {
 }
 
 export interface SessionRecord {
+  id?: number;
   start_time: string;
   end_time: string;
   duration_secs: number;
+}
+
+export interface SessionKeyStats {
+  session_id: number;
+  key_name: string;
+  presses: number;
+  chatters: number;
+  chatter_releases: number;
 }
 
 export interface MonitorSharedState {

@@ -196,9 +196,19 @@ pub struct SwitchHistoryEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecord {
+    pub id: Option<i64>,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
     pub duration_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionKeyStats {
+    pub session_id: i64,
+    pub key_name: String,
+    pub presses: u64,
+    pub chatters: u64,
+    pub chatter_releases: u64,
 }
 
 #[serde_as]

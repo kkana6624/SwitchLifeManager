@@ -1,48 +1,97 @@
-import { Container, Title, Grid, Paper, Stack, Text, Group, Badge, ScrollArea, Card } from '@mantine/core';
-import { MonitorSharedState, SessionRecord } from '../../types';
+import { Container, Title, Grid, Paper, Stack, Text, Group, Badge, ScrollArea, Card, Table, Loader, Center } from '@mantine/core';
+import { MonitorSharedState, SessionRecord, SessionKeyStats } from '../../types';
 import { useState, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 
 interface SessionHistoryProps {
     state: MonitorSharedState;
 }
 
 export function SessionHistory({ state }: SessionHistoryProps) {
+    const [historySessions, setHistorySessions] = useState<SessionRecord[]>([]);
     const [selectedSession, setSelectedSession] = useState<SessionRecord | null>(null);
+    const [sessionDetails, setSessionDetails] = useState<SessionKeyStats[] | null>(null);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+    const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
-    // Update selected session to the latest one when sessions update, if nothing was selected manually?
-    // Or just default to the last one on mount.
+    // Generate a dependency key that only changes when the session list content changes
+    const recentSessionKey = state.recent_sessions
+        ? `${state.recent_sessions.length}_${state.recent_sessions[state.recent_sessions.length - 1]?.end_time}`
+        : "";
+
+    // Fetch history on mount and when a new session might have been added
     useEffect(() => {
-        if (!selectedSession && state.recent_sessions && state.recent_sessions.length > 0) {
-            setSelectedSession(state.recent_sessions[state.recent_sessions.length - 1]);
-        }
-    }, [state.recent_sessions]);
+        const fetchHistory = async () => {
+            setIsLoadingHistory(true);
+            try {
+                const sessions = await invoke<SessionRecord[]>('get_history_sessions', { limit: 50, offset: 0 });
+                setHistorySessions(sessions);
+                // Auto-select the latest session if none selected
+                if (!selectedSession && sessions.length > 0) {
+                    handleSelectSession(sessions[0]);
+                }
+            } catch (error) {
+                console.error("Failed to fetch session history:", error);
+            } finally {
+                setIsLoadingHistory(false);
+            }
+        };
 
-    // Reverse order for display (Newest first)
-    const sessions = state.recent_sessions ? [...state.recent_sessions].reverse() : [];
+        fetchHistory();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [recentSessionKey]);
+
+    const handleSelectSession = async (session: SessionRecord) => {
+        setSelectedSession(session);
+        setSessionDetails(null); // Clear previous details while loading
+
+        if (session.id === undefined) {
+            // Fallback for sessions without ID (should not happen with DB persistance)
+            return;
+        }
+
+        setIsLoadingDetails(true);
+        try {
+            const details = await invoke<SessionKeyStats[]>('get_session_details', { sessionId: session.id });
+            setSessionDetails(details);
+        } catch (error) {
+            console.error("Failed to fetch session details:", error);
+        } finally {
+            setIsLoadingDetails(false);
+        }
+    };
 
     return (
         <Container fluid>
-            <Title order={4} mb="md">Past Sessions</Title>
+            <Title order={4} mb="md">Past Sessions (History)</Title>
             <Grid>
                 {/* Left Pane: Session List */}
                 <Grid.Col span={{ base: 12, md: 4 }}>
-                    <Paper withBorder h={500} display="flex" style={{ flexDirection: 'column' }}>
+                    <Paper withBorder h={600} display="flex" style={{ flexDirection: 'column' }}>
                         <Text p="xs" fw={700} bg="gray.1" style={{ borderBottom: '1px solid #eee' }}>
-                            Recent Sessions
+                            Session Log
                         </Text>
                         <ScrollArea style={{ flex: 1 }}>
-                            {sessions.length === 0 && <Text p="md" c="dimmed" ta="center">No sessions recorded.</Text>}
-                            {sessions.map((session, index) => {
-                                const isSelected = selectedSession === session;
+                            {isLoadingHistory && (
+                                <Center p="xl">
+                                    <Loader size="sm" />
+                                </Center>
+                            )}
+                            {!isLoadingHistory && historySessions.length === 0 && (
+                                <Text p="md" c="dimmed" ta="center">No sessions recorded.</Text>
+                            )}
+                            {historySessions.map((session, index) => {
+                                const isSelected = selectedSession?.id === session.id;
                                 return (
                                     <div
-                                        key={index}
-                                        onClick={() => setSelectedSession(session)}
+                                        key={session.id || index}
+                                        onClick={() => handleSelectSession(session)}
                                         style={{
                                             padding: '12px',
                                             cursor: 'pointer',
                                             backgroundColor: isSelected ? 'var(--mantine-color-blue-0)' : 'transparent',
-                                            borderBottom: '1px solid #f0f0f0'
+                                            borderBottom: '1px solid #f0f0f0',
+                                            transition: 'background-color 0.2s'
                                         }}
                                     >
                                         <Group justify="space-between" mb={4}>
@@ -70,39 +119,64 @@ export function SessionHistory({ state }: SessionHistoryProps) {
                             <Stack>
                                 <Group justify="space-between">
                                     <Title order={5}>Session Details</Title>
-                                    <Text size="sm" c="dimmed">
-                                        {new Date(selectedSession.start_time).toLocaleString()} - {new Date(selectedSession.end_time).toLocaleTimeString()}
-                                    </Text>
+                                    <Stack gap={0} align="flex-end">
+                                        <Text size="sm" c="dimmed">
+                                            Start: {new Date(selectedSession.start_time).toLocaleString()}
+                                        </Text>
+                                        <Text size="sm" c="dimmed">
+                                            End: {new Date(selectedSession.end_time).toLocaleTimeString()}
+                                        </Text>
+                                    </Stack>
                                 </Group>
 
                                 <Paper p="md" bg="gray.0">
-                                    <Text>Duration: <b>{selectedSession.duration_secs} seconds</b></Text>
-                                    {/* Note: Currently backend might not be storing per-key stats in SessionRecord history. 
-                                        If the requirement is to show detailed stats for "Past Sessions", we need to verify if `SessionRecord` has that data.
-                                        Looking at `models.rs` and `AppConfig`, `SessionRecord` only has timestamp/duration currently?
-                                        
-                                        Wait, looking at `architecture.md`:
-                                        "直近3回のセッションについて、開始時刻・終了時刻・プレイ時間を記録し..." 
-                                        It seems strictly history of times. 
-                                        BUT "詳細ビュー (右ペイン): ...各キーのプレス数..." is in the NEW requirement (6.4).
-                                        
-                                        Crucial Check: Does backend store stats in SessionRecord?
-                                        I suspect NO based on previous files.
-                                        
-                                        If NOT, I can only show "Last Session" stats (which are in `state.switches[].stats.last_session_presses`) 
-                                        IF the selected session is indeed the "Last Session".
-                                        For older sessions, I might not have the data unless I persist it.
-                                        
-                                        For now, I will implement "Last Session" details if the selected session matches the last one.
-                                        For others, I'll show "Detailed stats not available".
-                                    */}
+                                    <Group>
+                                        <Text>Duration:</Text>
+                                        <Badge size="lg" variant="filled">{selectedSession.duration_secs} Seconds</Badge>
+                                    </Group>
                                 </Paper>
 
-                                {/* Placeholder for stats - Implementation Dependency Check needed */}
-                                <Text c="dimmed" size="sm" mt="md">
-                                    * Detailed key statistics are currently only available for the most recent session.
-                                    (Architecture update might be needed to store full stats per session in history)
-                                </Text>
+                                <Title order={6} mt="sm">Key Statistics</Title>
+
+                                {isLoadingDetails ? (
+                                    <Center p="xl"><Loader /></Center>
+                                ) : sessionDetails ? (
+                                    <ScrollArea h={400}>
+                                        <Table striped highlightOnHover>
+                                            <Table.Thead>
+                                                <Table.Tr>
+                                                    <Table.Th>Key</Table.Th>
+                                                    <Table.Th style={{ textAlign: 'right' }}>Presses</Table.Th>
+                                                    <Table.Th style={{ textAlign: 'right' }}>Chatters</Table.Th>
+                                                    <Table.Th style={{ textAlign: 'right' }}>Chatter Rate</Table.Th>
+                                                </Table.Tr>
+                                            </Table.Thead>
+                                            <Table.Tbody>
+                                                {sessionDetails.sort((a, b) => a.key_name.localeCompare(b.key_name, undefined, { numeric: true })).map((stat) => {
+                                                    const rate = stat.presses > 0
+                                                        ? ((stat.chatters / stat.presses) * 100).toFixed(2)
+                                                        : "0.00";
+
+                                                    // Highlight problematic keys
+                                                    const isHighChatter = parseFloat(rate) > 1.0 && stat.presses > 10;
+
+                                                    return (
+                                                        <Table.Tr key={stat.key_name}>
+                                                            <Table.Td fw={500}>{stat.key_name}</Table.Td>
+                                                            <Table.Td style={{ textAlign: 'right' }}>{stat.presses.toLocaleString()}</Table.Td>
+                                                            <Table.Td style={{ textAlign: 'right' }} c={isHighChatter ? 'red' : undefined} fw={isHighChatter ? 700 : 400}>
+                                                                {stat.chatters.toLocaleString()}
+                                                            </Table.Td>
+                                                            <Table.Td style={{ textAlign: 'right' }}>{rate}%</Table.Td>
+                                                        </Table.Tr>
+                                                    );
+                                                })}
+                                            </Table.Tbody>
+                                        </Table>
+                                    </ScrollArea>
+                                ) : (
+                                    <Text c="dimmed">No details available for this session.</Text>
+                                )}
                             </Stack>
                         </Card>
                     ) : (

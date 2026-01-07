@@ -73,3 +73,21 @@
 - [x] Verify Data Persistence (Atomic Save, Migration).
 - [x] Verify Process Monitoring (Game start/exit detection).
 - [ ] Build Release (`cargo tauri build`).
+
+## Phase 5: Database Implementation (SQLite)
+- [x] Environment Setup & Domain
+    - [x] Add `sqlx` dependency to `src-tauri/Cargo.toml`.
+    - [x] Define `SessionRepository` trait.
+    - [x] Define `SessionKeyStats` entity.
+- [x] Infrastructure Implementation (TDD)
+    - [x] Implement `SqliteSessionRepository` with `sqlite::memory:` tests.
+    - [x] Implement schema migration (`sessions`, `session_keys`).
+- [x] Application Integration
+    - [x] Update `AppState` to hold repository instance.
+    - [x] Update `stop_session` to save to DB.
+    - [x] Implement `get_history_sessions` / `get_session_details` commands.
+- [ ] UI Implementation
+    - [ ] Update `SessionHistory` component to fetch from DB using `get_history_sessions`.
+    - [ ] Implement detailed session view using `get_session_details`.
+    - [ ] Visualize per-key stats (presses, chatters) in the detailed view.
+
