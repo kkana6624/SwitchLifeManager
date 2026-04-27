@@ -11,7 +11,8 @@ pub mod tests {
     use crate::domain::errors::InputError;
     use crate::infrastructure::persistence::ConfigRepository;
     use crate::infrastructure::process_monitor::ProcessMonitor;
-    use crate::usecase::monitor::{MonitorService, MonitorCommand, MonitorSharedState};
+    use crate::usecase::monitor::{MonitorService, MonitorCommand};
+    use crate::usecase::state_publisher::{MonitorSharedState, StatePublisher};
 
     // --- Mocks ---
 
@@ -75,7 +76,8 @@ pub mod tests {
             is_running: Arc::new(Mutex::new(false))
         };
 
-        let service = MonitorService::new(input, process, repo, rx, shared_state.clone());
+        let publisher = StatePublisher::new(shared_state.clone());
+        let service = MonitorService::new(input, process, repo, rx, publisher);
         assert!(service.is_ok());
     }
 
@@ -107,7 +109,8 @@ pub mod tests {
             is_running: Arc::new(Mutex::new(false))
         };
 
-        let mut service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+        let publisher = StatePublisher::new(shared_state.clone());
+        let mut service = MonitorService::new(input, process, repo, rx, publisher).unwrap();
 
         // 1. Test ResetStats
         service.handle_command(MonitorCommand::ResetStats { key: key.clone() });
@@ -150,7 +153,8 @@ pub mod tests {
             is_running: Arc::new(Mutex::new(false))
         };
 
-        let mut service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+        let publisher = StatePublisher::new(shared_state.clone());
+        let mut service = MonitorService::new(input, process, repo, rx, publisher).unwrap();
 
         // Attempt to assign Key2 -> Button 1 (Conflict)
         service.handle_command(MonitorCommand::SetKeyBinding { key: LogicalKey::Key2, button: 1 });
@@ -197,7 +201,8 @@ pub mod tests {
             is_running: is_running.clone()
         };
 
-        let service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+        let publisher = StatePublisher::new(shared_state.clone());
+        let service = MonitorService::new(input, process, repo, rx, publisher).unwrap();
 
         // Run monitor in background thread
         let handle = thread::spawn(move || {

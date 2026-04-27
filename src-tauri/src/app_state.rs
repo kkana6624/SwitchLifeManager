@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use arc_swap::ArcSwap;
 use crossbeam_channel::Sender;
-use crate::usecase::monitor::{MonitorCommand, MonitorSharedState};
+use crate::usecase::monitor::MonitorCommand;
+use crate::usecase::state_publisher::MonitorSharedState;
 
 pub struct AppState {
     pub shared_state: Arc<ArcSwap<MonitorSharedState>>,

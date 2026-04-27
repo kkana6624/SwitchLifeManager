@@ -20,6 +20,13 @@ impl InputSource for MockInputSource {
     fn get_state(&mut self, _controller_index: u32) -> Result<u32, InputError> {
         self.states.pop_front().unwrap_or(Ok(0))
     }
+
+    fn enumerate_controllers(&mut self) -> Result<Vec<crate::domain::models::ControllerInfo>, InputError> {
+        Ok(vec![crate::domain::models::ControllerInfo {
+            id: "mock_uuid".to_string(),
+            name: "Mock Controller".to_string(),
+        }])
+    }
 }
 
 // --- Gilrs (DirectInput/HID) ---
@@ -124,6 +131,19 @@ impl InputSource for GilrsInputSource {
 
         Ok(bitmap)
     }
+
+    fn enumerate_controllers(&mut self) -> Result<Vec<crate::domain::models::ControllerInfo>, InputError> {
+        let mut controllers = Vec::new();
+        for (_id, gamepad) in self.gilrs.gamepads() {
+            let uuid_bytes = gamepad.uuid();
+            let uuid_str = uuid_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            controllers.push(crate::domain::models::ControllerInfo {
+                id: uuid_str,
+                name: gamepad.name().to_string(),
+            });
+        }
+        Ok(controllers)
+    }
 }
 
 // --- Windows XInput ---
@@ -197,5 +217,28 @@ impl InputSource for DynamicInputSource {
 
     fn set_input_method(&mut self, method: InputMethod) {
         self.switch_to(method);
+    }
+
+    fn enumerate_controllers(&mut self) -> Result<Vec<crate::domain::models::ControllerInfo>, InputError> {
+        match self {
+            #[cfg(target_os = "windows")]
+            Self::XInput(_) => {
+                // For XInput, we'll instantiate a temporary Gilrs to enumerate all connected gamepads
+                // because XInput doesn't provide hardware UUIDs easily.
+                let mut temp_gilrs = gilrs::Gilrs::new().map_err(|_| InputError::Disconnected)?;
+                let mut controllers = Vec::new();
+                for (_id, gamepad) in temp_gilrs.gamepads() {
+                    let uuid_bytes = gamepad.uuid();
+                    let uuid_str = uuid_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                    controllers.push(crate::domain::models::ControllerInfo {
+                        id: uuid_str,
+                        name: gamepad.name().to_string(),
+                    });
+                }
+                Ok(controllers)
+            },
+            Self::Gilrs(s) => s.enumerate_controllers(),
+            Self::Mock(s) => s.enumerate_controllers(),
+        }
     }
 }

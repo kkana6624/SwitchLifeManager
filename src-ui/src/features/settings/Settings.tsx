@@ -12,7 +12,7 @@ interface SettingsProps {
 export function Settings({ state }: SettingsProps) {
     const [learningKey, setLearningKey] = useState<string | null>(null);
 
-    const handleConfigChange = (key: keyof AppConfig, value: any) => {
+    const handleConfigChange = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
         const newConfig = { ...state.config, [key]: value };
         invoke('update_config', { config: newConfig });
     };

@@ -8,8 +8,7 @@ use std::time::Duration;
 use tempfile::NamedTempFile;
 use crate::domain::models::UserProfile;
 
-// Current Schema Version (Should match UserProfile::default() schema_version)
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 pub trait ConfigRepository {
     fn load(&self) -> Result<UserProfile>;
@@ -99,21 +98,36 @@ impl FileConfigRepository {
 impl ConfigRepository for FileConfigRepository {
     fn load(&self) -> Result<UserProfile> {
         if !self.path.exists() {
-            // New profile: Ensure we can create the directory later.
-            // Return default.
             return Ok(UserProfile::default());
         }
 
         let file = fs::File::open(&self.path).context(format!("Failed to open config file: {:?}", self.path))?;
         let reader = std::io::BufReader::new(file);
-        let profile: UserProfile = serde_json::from_reader(reader).context("Failed to parse config file")?;
+        let mut value: serde_json::Value = serde_json::from_reader(reader).context("Failed to parse config file as JSON")?;
 
-        // Schema Version Validation
-        if profile.schema_version != CURRENT_SCHEMA_VERSION {
-             // Future: Migration logic here
-             return Err(anyhow!("Schema version mismatch: expected {}, found {}. Migration not implemented.", CURRENT_SCHEMA_VERSION, profile.schema_version));
+        let version = value.get("schema_version").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+
+        if version == 1 {
+            // Migrate v1 to v2
+            let mut new_value = serde_json::json!({
+                "schema_version": 2,
+                "config": value.get("config").unwrap_or(&serde_json::json!({})),
+                "active_controller_id": "default",
+                "controllers": {
+                    "default": {
+                        "mapping": value.get("mapping").unwrap_or(&serde_json::json!({})),
+                        "switches": value.get("switches").unwrap_or(&serde_json::json!({})),
+                        "switch_history": value.get("switch_history").unwrap_or(&serde_json::json!([])),
+                        "recent_sessions": value.get("recent_sessions").unwrap_or(&serde_json::json!([])),
+                    }
+                }
+            });
+            value = new_value;
+        } else if version != CURRENT_SCHEMA_VERSION {
+             return Err(anyhow!("Schema version mismatch: expected {}, found {}", CURRENT_SCHEMA_VERSION, version));
         }
 
+        let profile: UserProfile = serde_json::from_value(value).context("Failed to deserialize migrated config")?;
         Ok(profile)
     }
 

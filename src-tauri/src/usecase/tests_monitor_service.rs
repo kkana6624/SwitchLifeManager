@@ -9,7 +9,8 @@ mod tests {
     use crate::domain::errors::InputError;
     use crate::infrastructure::persistence::ConfigRepository;
     use crate::infrastructure::process_monitor::ProcessMonitor;
-    use crate::usecase::monitor::{MonitorService, MonitorCommand, MonitorSharedState};
+    use crate::usecase::monitor::{MonitorService, MonitorCommand};
+    use crate::usecase::state_publisher::{MonitorSharedState, StatePublisher};
 
     // --- Mocks ---
 
@@ -57,7 +58,8 @@ mod tests {
         let input = MockInputSource;
         let process = MockProcessMonitor;
 
-        let mut service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+        let publisher = StatePublisher::new(shared_state.clone());
+        let mut service = MonitorService::new(input, process, repo, rx, publisher).unwrap();
 
         // Verify initial config
         assert_eq!(service.profile.config.target_controller_index, 0);
@@ -100,7 +102,8 @@ mod tests {
         let input = MockInputSource;
         let process = MockProcessMonitor;
 
-        let mut service = MonitorService::new(input, process, repo, rx, shared_state.clone()).unwrap();
+        let publisher = StatePublisher::new(shared_state.clone());
+        let mut service = MonitorService::new(input, process, repo, rx, publisher).unwrap();
 
         // 1. Test ResetStats
         service.handle_command(MonitorCommand::ResetStats { key: key.clone() });

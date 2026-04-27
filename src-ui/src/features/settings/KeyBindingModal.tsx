@@ -20,15 +20,21 @@ export function KeyBindingModal({ opened, onClose, targetKey, currentRawState, o
     // 3. Take that value.
     
     const [step, setStep] = useState<'wait-release' | 'wait-press'>('wait-release');
+    const [prevOpened, setPrevOpened] = useState(opened);
 
-    useEffect(() => {
+    if (opened !== prevOpened) {
+        setPrevOpened(opened);
         if (!opened) {
             setStep('wait-release');
-            return;
         }
+    }
+
+    useEffect(() => {
+        if (!opened) return;
 
         if (step === 'wait-release') {
             if (currentRawState === 0) {
+                // eslint-disable-next-line react-hooks/set-state-in-effect
                 setStep('wait-press');
             }
         } else if (step === 'wait-press') {

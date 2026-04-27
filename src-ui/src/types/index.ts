@@ -3,6 +3,11 @@ export type LogicalKey =
   | "E1" | "E2" | "E3" | "E4"
   | string; // For "Other-{id}"
 
+export interface ControllerInfo {
+  id: string;
+  name: string;
+}
+
 export interface AppConfig {
   target_controller_index: number;
   input_method: "XInput" | "DirectInput";
@@ -67,4 +72,6 @@ export interface MonitorSharedState {
   last_status_message: string | null;
   last_save_result: LastSaveResult | null;
   recent_sessions: SessionRecord[];
+  active_controller_id: string;
+  connected_controllers: ControllerInfo[];
 }
