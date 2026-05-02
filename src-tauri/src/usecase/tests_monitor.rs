@@ -94,7 +94,7 @@ pub mod tests {
         stats.total_presses = 100;
         stats.total_chatters = 5;
 
-        profile.switches.insert(key.clone(), crate::domain::models::SwitchData {
+        profile.controllers.get_mut("default").unwrap().switches.insert(key.clone(), crate::domain::models::SwitchData {
             switch_model_id: "old_model".to_string(),
             stats: stats.clone(),
             last_replaced_at: None,
@@ -116,21 +116,23 @@ pub mod tests {
         service.handle_command(MonitorCommand::ResetStats { key: key.clone() });
 
         // Check internal profile state
-        let switch = service.profile.switches.get(&key).unwrap();
+        let active = service.profile.controllers.get(&service.profile.active_controller_id).unwrap();
+        let switch = active.switches.get(&key).unwrap();
         assert_eq!(switch.stats.total_presses, 0);
         assert_eq!(switch.stats.total_chatters, 0);
         assert_eq!(switch.switch_model_id, "old_model"); // Model ID should persist
 
         // 2. Test ReplaceSwitch
         // First simulate some usage again
-        service.profile.switches.get_mut(&key).unwrap().stats.total_presses = 50;
+        service.profile.controllers.get_mut(&service.profile.active_controller_id.clone()).unwrap().switches.get_mut(&key).unwrap().stats.total_presses = 50;
 
         service.handle_command(MonitorCommand::ReplaceSwitch {
             key: key.clone(),
             new_model_id: "new_model".to_string()
         });
 
-        let switch = service.profile.switches.get(&key).unwrap();
+        let active = service.profile.controllers.get(&service.profile.active_controller_id).unwrap();
+        let switch = active.switches.get(&key).unwrap();
         assert_eq!(switch.stats.total_presses, 0); // Should be reset
         assert_eq!(switch.switch_model_id, "new_model");
     }
@@ -142,7 +144,7 @@ pub mod tests {
 
         let mut profile = UserProfile::default();
         // Assign Key1 -> Button 1
-        profile.mapping.bindings.insert(LogicalKey::Key1, 1);
+        profile.controllers.get_mut("default").unwrap().mapping.bindings.insert(LogicalKey::Key1, 1);
 
         let repo = MockRepository { profile };
         let input = MockInputSource {
@@ -160,9 +162,10 @@ pub mod tests {
         service.handle_command(MonitorCommand::SetKeyBinding { key: LogicalKey::Key2, button: 1 });
 
         // Key1 should be unbound (set to 0)
-        assert_eq!(service.profile.mapping.bindings.get(&LogicalKey::Key1), Some(&0));
+        let active = service.profile.controllers.get(&service.profile.active_controller_id).unwrap();
+        assert_eq!(active.mapping.bindings.get(&LogicalKey::Key1), Some(&0));
         // Key2 should be inserted
-        assert_eq!(service.profile.mapping.bindings.get(&LogicalKey::Key2), Some(&1));
+        assert_eq!(active.mapping.bindings.get(&LogicalKey::Key2), Some(&1));
     }
 
     #[test]
@@ -174,13 +177,13 @@ pub mod tests {
         let mut profile = UserProfile::default();
         let key = LogicalKey::Key1;
         // Bind Key1 to Button 1
-        profile.mapping.bindings.insert(key.clone(), 1);
+        profile.controllers.get_mut("default").unwrap().mapping.bindings.insert(key.clone(), 1);
 
         // Pre-populate stats with some session presses
         let mut stats = ButtonStats::default();
         stats.total_presses = 100;
         stats.last_session_presses = 50;
-        profile.switches.insert(key.clone(), crate::domain::models::SwitchData {
+        profile.controllers.get_mut("default").unwrap().switches.insert(key.clone(), crate::domain::models::SwitchData {
             switch_model_id: "test".to_string(),
             stats: stats,
             last_replaced_at: None,

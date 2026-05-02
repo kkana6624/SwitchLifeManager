@@ -88,7 +88,7 @@ mod tests {
         // Setup profile with some data
         let mut profile = UserProfile::default();
         let key = LogicalKey::Key1;
-        profile.switches.insert(key.clone(), SwitchData {
+        profile.controllers.get_mut("default").unwrap().switches.insert(key.clone(), SwitchData {
             switch_model_id: "old_model".to_string(),
             stats: ButtonStats {
                 total_presses: 100,
@@ -108,19 +108,21 @@ mod tests {
         // 1. Test ResetStats
         service.handle_command(MonitorCommand::ResetStats { key: key.clone() });
         
-        let switch = service.profile.switches.get(&key).unwrap();
+        let active_id = service.profile.active_controller_id.clone();
+        let active = service.profile.controllers.get(&active_id).unwrap();
+        let switch = active.switches.get(&key).unwrap();
         assert_eq!(switch.stats.total_presses, 0);
         assert_eq!(switch.stats.total_chatters, 0);
         assert_eq!(switch.switch_model_id, "old_model");
         assert!(switch.last_replaced_at.is_some());
         
         // History check
-        assert_eq!(service.profile.switch_history.len(), 1);
-        assert_eq!(service.profile.switch_history[0].event_type, "Reset");
-        assert_eq!(service.profile.switch_history[0].previous_stats.total_presses, 100);
+        assert_eq!(active.switch_history.len(), 1);
+        assert_eq!(active.switch_history[0].event_type, "Reset");
+        assert_eq!(active.switch_history[0].previous_stats.total_presses, 100);
 
         // Simulate usage again
-        service.profile.switches.get_mut(&key).unwrap().stats.total_presses = 50;
+        service.profile.controllers.get_mut(&active_id).unwrap().switches.get_mut(&key).unwrap().stats.total_presses = 50;
 
         // 2. Test ReplaceSwitch
         service.handle_command(MonitorCommand::ReplaceSwitch { 
@@ -128,14 +130,15 @@ mod tests {
             new_model_id: "new_model".to_string() 
         });
 
-        let switch = service.profile.switches.get(&key).unwrap();
+        let active = service.profile.controllers.get(&active_id).unwrap();
+        let switch = active.switches.get(&key).unwrap();
         assert_eq!(switch.stats.total_presses, 0);
         assert_eq!(switch.switch_model_id, "new_model");
         
         // History check
-        assert_eq!(service.profile.switch_history.len(), 2);
-        assert_eq!(service.profile.switch_history[1].event_type, "Replace");
-        assert_eq!(service.profile.switch_history[1].previous_stats.total_presses, 50);
+        assert_eq!(active.switch_history.len(), 2);
+        assert_eq!(active.switch_history[1].event_type, "Replace");
+        assert_eq!(active.switch_history[1].previous_stats.total_presses, 50);
 
         // 3. Test SetLastReplacedDate
         let now = Utc::now();
@@ -143,12 +146,13 @@ mod tests {
             key: key.clone(),
             date: now,
         });
-        let switch = service.profile.switches.get(&key).unwrap();
+        let active = service.profile.controllers.get(&active_id).unwrap();
+        let switch = active.switches.get(&key).unwrap();
         assert_eq!(switch.last_replaced_at, Some(now));
         
         // History check
-        assert_eq!(service.profile.switch_history.len(), 3);
-        assert_eq!(service.profile.switch_history[2].event_type, "ManualEdit");
+        assert_eq!(active.switch_history.len(), 3);
+        assert_eq!(active.switch_history[2].event_type, "ManualEdit");
     }
 
     #[test]
