@@ -14,6 +14,8 @@ use crate::infrastructure::process_monitor::ProcessMonitor;
 use crate::infrastructure::timer::HighResolutionTimer;
 use crate::usecase::input_monitor::ChatterDetector;
 use crate::usecase::state_publisher::StatePublisher;
+use crate::usecase::switch_operations::SwitchOperations;
+use crate::usecase::session_manager::SessionManager;
 
 pub enum MonitorCommand {
     UpdateConfig(AppConfig),
@@ -162,19 +164,19 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             }
             MonitorCommand::ReplaceSwitch { key, new_model_id } => {
                 if let Some(active_profile) = self.profile.controllers.get_mut(&self.profile.active_controller_id) {
-                    active_profile.replace_switch(key.clone(), new_model_id.clone());
+                    SwitchOperations::replace_switch(active_profile, key.clone(), new_model_id.clone());
                     info!("Replaced switch for {} with new model {}", key, new_model_id);
                 }
             }
             MonitorCommand::ResetStats { key } => {
                 if let Some(active_profile) = self.profile.controllers.get_mut(&self.profile.active_controller_id) {
-                    active_profile.reset_switch_stats(key.clone());
+                    SwitchOperations::reset_stats(active_profile, key.clone());
                     info!("Reset stats for {}", key);
                 }
             }
             MonitorCommand::SetLastReplacedDate { key, date } => {
                 if let Some(active_profile) = self.profile.controllers.get_mut(&self.profile.active_controller_id) {
-                    active_profile.set_last_replaced_date(key.clone(), date);
+                    SwitchOperations::set_last_replaced_date(active_profile, key.clone(), date);
                     info!("Set last replaced date for {} to {}", key, date);
                 }
             }
@@ -400,13 +402,13 @@ impl<I: InputSource, P: ProcessMonitor, R: ConfigRepository> MonitorService<I, P
             if is_game_running {
                 info!("Game started. Resetting session stats.");
                 self.current_session_start = Some(Utc::now());
-                active_profile.start_session();
+                SessionManager::start_session(active_profile);
             } else {
                 let end_time = Utc::now();
                 info!("Game ended.");
 
                 if let Some(start_time) = self.current_session_start.take() {
-                    let duration_secs = active_profile.end_session(start_time, end_time);
+                    let duration_secs = SessionManager::end_session(active_profile, start_time, end_time);
                     info!("Session recorded: {}s", duration_secs);
                 }
 
