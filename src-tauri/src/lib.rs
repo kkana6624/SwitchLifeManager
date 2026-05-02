@@ -3,17 +3,15 @@ pub mod commands;
 pub mod domain;
 pub mod infrastructure;
 pub mod usecase;
+mod logging;
+mod tray;
 
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use arc_swap::ArcSwap;
 use crossbeam_channel::unbounded;
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, WindowEvent,
-};
+use tauri::{Emitter, Manager, WindowEvent};
 
 use crate::app_state::AppState;
 use crate::domain::models::InputMethod;
@@ -21,8 +19,7 @@ use crate::infrastructure::input_source::DynamicInputSource;
 use crate::infrastructure::persistence::FileConfigRepository;
 use crate::infrastructure::process_monitor::SysinfoProcessMonitor;
 use crate::usecase::monitor::MonitorService;
-use crate::usecase::state_publisher::MonitorSharedState;
-
+use crate::usecase::state_publisher::{MonitorSharedState, StatePublisher};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,100 +38,20 @@ pub fn run() {
             commands::set_active_controller
         ])
         .setup(|app| {
-            // --- Logger Setup ---
-            if let Ok(config_path) = FileConfigRepository::get_default_config_path() {
-                let log_path = config_path.with_file_name("app.log");
-                if let Some(parent) = log_path.parent() {
-                     let _ = std::fs::create_dir_all(parent);
-                }
-                
-                let _ = simplelog::WriteLogger::init(
-                    simplelog::LevelFilter::Info,
-                    simplelog::Config::default(),
-                    std::fs::File::create(log_path).unwrap_or_else(|_| std::fs::File::create("switch_life_manager.log").unwrap()),
-                );
-            }
+            logging::init_logger();
 
-            // --- Monitor Setup ---
             let (command_tx, command_rx) = unbounded();
             let shared_state = Arc::new(ArcSwap::from_pointee(MonitorSharedState::default()));
 
-            // Repositories & Services
-            // Default config path: %LOCALAPPDATA%/SwitchLifeManager/profile.json
-            let config_path = FileConfigRepository::get_default_config_path()
-                .expect("Failed to determine config path");
-            let repository = FileConfigRepository::new(config_path);
-            let input_source = DynamicInputSource::new(InputMethod::default());
-            let process_monitor = SysinfoProcessMonitor::new();
-
-            // Spawn Monitor Thread
-            let service_shared_state = shared_state.clone();
-            thread::spawn(move || {
-                let publisher = crate::usecase::state_publisher::StatePublisher::new(service_shared_state);
-                let service = MonitorService::new(
-                    input_source,
-                    process_monitor,
-                    repository,
-                    command_rx,
-                    publisher,
-                )
-                .expect("Failed to create MonitorService");
-                service.run();
-            });
-
-            // Manage App State
+            // Spawn Monitor Service thread
+            setup_monitor(command_rx, shared_state.clone());
             app.manage(AppState::new(shared_state.clone(), command_tx));
 
-            // --- State Emit Loop ---
-            let app_handle = app.handle().clone();
-            let emit_shared_state = shared_state.clone();
-            tauri::async_runtime::spawn(async move {
-                let mut interval = tokio::time::interval(Duration::from_millis(33)); // ~30fps
-                loop {
-                    interval.tick().await;
-                    let state = emit_shared_state.load();
-                    // Emit state-update event to frontend
-                    if let Err(e) = app_handle.emit("state-update", &**state) {
-                        // This might fail if the app is shutting down, which is fine
-                         log::trace!("Failed to emit state-update: {}", e);
-                    }
-                }
-            });
+            // Start frontend state emit loop
+            start_emit_loop(app.handle().clone(), shared_state);
 
-            // --- Tray Icon Setup ---
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
-
-            let _tray = TrayIconBuilder::with_id("tray")
-                .menu(&menu)
-                .on_menu_event(move |app, event| match event.id.as_ref() {
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| match event {
-                    TrayIconEvent::DoubleClick {
-                        button: MouseButton::Left,
-                        ..
-                    } => {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    _ => {}
-                })
-                .icon(app.default_window_icon().unwrap().clone())
-                .build(app)?;
+            // Setup system tray
+            tray::setup_tray(app)?;
 
             Ok(())
         })
@@ -147,4 +64,46 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Create and spawn the monitor service on a background thread.
+fn setup_monitor(
+    command_rx: crossbeam_channel::Receiver<crate::usecase::monitor::MonitorCommand>,
+    shared_state: Arc<ArcSwap<MonitorSharedState>>,
+) {
+    let config_path = FileConfigRepository::get_default_config_path()
+        .expect("Failed to determine config path");
+    let repository = FileConfigRepository::new(config_path);
+    let input_source = DynamicInputSource::new(InputMethod::default());
+    let process_monitor = SysinfoProcessMonitor::new();
+
+    thread::spawn(move || {
+        let publisher = StatePublisher::new(shared_state);
+        let service = MonitorService::new(
+            input_source,
+            process_monitor,
+            repository,
+            command_rx,
+            publisher,
+        )
+        .expect("Failed to create MonitorService");
+        service.run();
+    });
+}
+
+/// Spawn an async loop that emits state updates to the frontend at ~30fps.
+fn start_emit_loop(
+    app_handle: tauri::AppHandle,
+    shared_state: Arc<ArcSwap<MonitorSharedState>>,
+) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(33));
+        loop {
+            interval.tick().await;
+            let state = shared_state.load();
+            if let Err(e) = app_handle.emit("state-update", &**state) {
+                log::trace!("Failed to emit state-update: {}", e);
+            }
+        }
+    });
 }
