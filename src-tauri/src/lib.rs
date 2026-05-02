@@ -20,7 +20,7 @@ use crate::domain::models::InputMethod;
 use crate::infrastructure::input_source::DynamicInputSource;
 use crate::infrastructure::persistence::FileConfigRepository;
 use crate::infrastructure::process_monitor::SysinfoProcessMonitor;
-use crate::usecase::monitor::{MonitorService, MonitorCommand};
+use crate::usecase::monitor::MonitorService;
 use crate::usecase::state_publisher::MonitorSharedState;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/

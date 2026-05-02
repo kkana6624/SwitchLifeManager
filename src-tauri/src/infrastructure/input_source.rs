@@ -225,7 +225,7 @@ impl InputSource for DynamicInputSource {
             Self::XInput(_) => {
                 // For XInput, we'll instantiate a temporary Gilrs to enumerate all connected gamepads
                 // because XInput doesn't provide hardware UUIDs easily.
-                let mut temp_gilrs = gilrs::Gilrs::new().map_err(|_| InputError::Disconnected)?;
+                let temp_gilrs = gilrs::Gilrs::new().map_err(|_| InputError::Disconnected)?;
                 let mut controllers = Vec::new();
                 for (_id, gamepad) in temp_gilrs.gamepads() {
                     let uuid_bytes = gamepad.uuid();

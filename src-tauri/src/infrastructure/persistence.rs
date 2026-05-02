@@ -109,7 +109,7 @@ impl ConfigRepository for FileConfigRepository {
 
         if version == 1 {
             // Migrate v1 to v2
-            let mut new_value = serde_json::json!({
+            let new_value = serde_json::json!({
                 "schema_version": 2,
                 "config": value.get("config").unwrap_or(&serde_json::json!({})),
                 "active_controller_id": "default",
