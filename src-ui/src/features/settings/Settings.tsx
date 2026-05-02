@@ -44,7 +44,7 @@ export function Settings({ state }: SettingsProps) {
                                     { value: 'XInput', label: 'XInput (Xbox)' }
                                 ]}
                                 value={state.config.input_method}
-                                onChange={(val) => handleConfigChange('input_method', val)}
+                                onChange={(val) => val && handleConfigChange('input_method', val as "XInput" | "DirectInput")}
                             />
 
                             <NumberInput

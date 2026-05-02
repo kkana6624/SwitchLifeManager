@@ -53,10 +53,16 @@ export interface LastSaveResult {
   timestamp: string;
 }
 
+export interface SessionKeyStats {
+  presses: number;
+  chatters: number;
+}
+
 export interface SessionRecord {
   start_time: string;
   end_time: string;
   duration_secs: number;
+  stats?: Record<string, SessionKeyStats>;
 }
 
 export interface MonitorSharedState {

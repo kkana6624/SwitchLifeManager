@@ -178,6 +178,14 @@ pub struct SessionRecord {
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
     pub duration_secs: u64,
+    #[serde(default)]
+    pub stats: HashMap<LogicalKey, SessionKeyStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionKeyStats {
+    pub presses: u64,
+    pub chatters: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -282,15 +290,26 @@ impl ControllerProfile {
     pub fn end_session(&mut self, start_time: DateTime<Utc>, end_time: DateTime<Utc>) -> u64 {
         let duration_secs = (end_time - start_time).num_seconds().max(0) as u64;
 
+        let mut stats = HashMap::new();
+        for (key, switch) in &self.switches {
+            if switch.stats.last_session_presses > 0 || switch.stats.last_session_chatters > 0 {
+                stats.insert(key.clone(), SessionKeyStats {
+                    presses: switch.stats.last_session_presses,
+                    chatters: switch.stats.last_session_chatters,
+                });
+            }
+        }
+
         let record = SessionRecord {
             start_time,
             end_time,
             duration_secs,
+            stats,
         };
 
         self.recent_sessions.push(record);
-        if self.recent_sessions.len() > 3 {
-            self.recent_sessions.remove(0); // Keep last 3 sessions
+        if self.recent_sessions.len() > 10 { // Increased to 10 for better history
+            self.recent_sessions.remove(0);
         }
 
         duration_secs
