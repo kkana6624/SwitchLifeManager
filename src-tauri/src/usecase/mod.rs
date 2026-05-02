@@ -4,8 +4,8 @@ pub mod input_monitor;
 pub mod switch_operations;
 pub mod session_manager;
 #[cfg(test)]
-mod tests_monitor;
+pub mod test_helpers;
 #[cfg(test)]
-mod tests_monitor_service;
+mod tests_monitor;
 #[cfg(test)]
 mod tests_session_logic;
