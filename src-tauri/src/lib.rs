@@ -20,20 +20,15 @@ use crate::domain::models::InputMethod;
 use crate::infrastructure::input_source::DynamicInputSource;
 use crate::infrastructure::persistence::FileConfigRepository;
 use crate::infrastructure::process_monitor::SysinfoProcessMonitor;
-use crate::usecase::monitor::{MonitorService, MonitorSharedState};
+use crate::usecase::monitor::MonitorService;
+use crate::usecase::state_publisher::MonitorSharedState;
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
             commands::get_snapshot,
             commands::force_save,
             commands::set_binding,
@@ -42,7 +37,8 @@ pub fn run() {
             commands::update_config,
             commands::set_target_controller,
             commands::reset_to_default_mapping,
-            commands::set_last_replaced_date
+            commands::set_last_replaced_date,
+            commands::set_active_controller
         ])
         .setup(|app| {
             // --- Logger Setup ---
@@ -74,12 +70,13 @@ pub fn run() {
             // Spawn Monitor Thread
             let service_shared_state = shared_state.clone();
             thread::spawn(move || {
+                let publisher = crate::usecase::state_publisher::StatePublisher::new(service_shared_state);
                 let service = MonitorService::new(
                     input_source,
                     process_monitor,
                     repository,
                     command_rx,
-                    service_shared_state,
+                    publisher,
                 )
                 .expect("Failed to create MonitorService");
                 service.run();

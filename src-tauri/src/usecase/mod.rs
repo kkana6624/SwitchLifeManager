@@ -1,4 +1,5 @@
 pub mod monitor;
+pub mod state_publisher;
 pub mod input_monitor;
 #[cfg(test)]
 mod tests_monitor;

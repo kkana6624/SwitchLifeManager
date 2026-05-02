@@ -1,5 +1,5 @@
 use crate::domain::errors::InputError;
-use crate::domain::models::InputMethod;
+use crate::domain::models::{InputMethod, ControllerInfo};
 
 /// Abstraction for getting input state.
 pub trait InputSource: Send {
@@ -9,4 +9,9 @@ pub trait InputSource: Send {
 
     /// Optional: updates the input method if the source supports switching.
     fn set_input_method(&mut self, _method: InputMethod) {}
+
+    /// Enumerates connected controllers.
+    fn enumerate_controllers(&mut self) -> Result<Vec<ControllerInfo>, InputError> {
+        Ok(Vec::new()) // Default implementation
+    }
 }

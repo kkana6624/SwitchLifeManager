@@ -12,7 +12,7 @@ interface SettingsProps {
 export function Settings({ state }: SettingsProps) {
     const [learningKey, setLearningKey] = useState<string | null>(null);
 
-    const handleConfigChange = (key: keyof AppConfig, value: any) => {
+    const handleConfigChange = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
         const newConfig = { ...state.config, [key]: value };
         invoke('update_config', { config: newConfig });
     };
@@ -44,7 +44,7 @@ export function Settings({ state }: SettingsProps) {
                                     { value: 'XInput', label: 'XInput (Xbox)' }
                                 ]}
                                 value={state.config.input_method}
-                                onChange={(val) => handleConfigChange('input_method', val)}
+                                onChange={(val) => val && handleConfigChange('input_method', val as "XInput" | "DirectInput")}
                             />
 
                             <NumberInput

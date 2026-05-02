@@ -8,8 +8,8 @@ interface ReportProps {
 
 export function Report({ state }: ReportProps) {
     // Calculate totals
-    let totalSessionPresses = 0;
-    let totalSessionChatters = 0;
+    const totalSessionPresses = ORDERED_KEYS.reduce((acc, key) => acc + (state.switches[key]?.stats.last_session_presses || 0), 0);
+    const totalSessionChatters = ORDERED_KEYS.reduce((acc, key) => acc + (state.switches[key]?.stats.last_session_chatters || 0), 0);
 
     const rows = ORDERED_KEYS.map(key => {
         const switchData = state.switches[key] || {
@@ -18,9 +18,6 @@ export function Report({ state }: ReportProps) {
 
         const presses = switchData.stats.last_session_presses;
         const chatters = switchData.stats.last_session_chatters;
-
-        totalSessionPresses += presses;
-        totalSessionChatters += chatters;
 
         const rate = presses > 0 ? (chatters / presses) * 100 : 0;
         const isHighChatter = rate > 1.0; // Highlight if > 1%

@@ -1,6 +1,7 @@
 use tauri::State;
 use crate::app_state::AppState;
-use crate::usecase::monitor::{MonitorCommand, MonitorSharedState};
+use crate::usecase::monitor::MonitorCommand;
+use crate::usecase::state_publisher::MonitorSharedState;
 use crate::domain::models::{LogicalKey, AppConfig, ButtonMap};
 use chrono::{DateTime, Utc};
 
@@ -52,4 +53,9 @@ pub fn replace_switch(state: State<'_, AppState>, key: LogicalKey, new_model_id:
 #[tauri::command]
 pub fn set_last_replaced_date(state: State<'_, AppState>, key: LogicalKey, date: DateTime<Utc>) {
     let _ = state.command_tx.send(MonitorCommand::SetLastReplacedDate { key, date });
+}
+
+#[tauri::command]
+pub fn set_active_controller(state: State<'_, AppState>, id: String) {
+    let _ = state.command_tx.send(MonitorCommand::SetActiveController(id));
 }
