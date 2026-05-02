@@ -21,13 +21,13 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # フロントエンド (React/Vite) ビルド用の Node.js セットアップ
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
 
       # バックエンド (Rust) ビルド用の Rust ツールチェーン
       - name: Install Rust toolchain
@@ -74,7 +74,7 @@ jobs:
 
       # GitHub Release の作成とファイルのアップロード
       - name: Create Release and Upload Asset
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ env.ASSET_PATH }}
